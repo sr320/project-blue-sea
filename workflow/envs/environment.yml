@@ -1,0 +1,22 @@
+name: base
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - pip=24.0
+  - pyyaml=6.0.1
+  - diamond=2.1.9
+  - seqkit=2.8.1
+  - blast=2.15.0
+  - hmmer=3.4
+  - mmseqs2=15.6f452
+  # Microbiome / symbiont track
+  - metabat2=2.15
+  - checkm-genome=1.2.2
+  - gtdbtk=2.4.0
+  - pip:
+      - anthropic==0.40.0
+      # SignalP 6 and DeepTMHMM are licence-restricted and are not installable
+      # from conda. Install them into the container at build time from the
+      # DTU download, or run them through biolib; see docs/tools.md.

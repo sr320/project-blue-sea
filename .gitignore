@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.egg-info/
+*.pyc
+
+# Re-creatable: tool output and sharded proteomes.
+scratch/
+logs/
+
+# Downloaded reference data; see docs/data.md for the fetch commands.
+resources/reference/
+
+# Durable but large; published to gannet rather than tracked here.
+results/
+containers/*.sif
+
+# NOT ignored: cache/ is the API response cache. It is durable, it is what
+# makes a rerun free, and it carries the full prompt/response provenance for
+# every LLM-judged score. Keep it on a backed-up filesystem.

@@ -1,0 +1,9 @@
+protein_id	gene_symbol	rationale	reference
+LSAL_P0	P0	Ribosomal P0; chimeric TT-P0 and P0-my32 constructs reduced lice 88-91% at 2-3 months, decaying to 20% and ~4% by 11 months	PMC12133460
+LSAL_MY32	my32	akirin/subolesin homolog; component of the P0-my32 chimera	PMC12133460
+LSAL_PRX2	prx2	Peroxiredoxin-2 peptide; tested as a sea lice antigen	frontiersin 2025 review
+LSAL_HPX1	hpx1	Salmon louse heme peroxidase 1; characterised as a candidate antigen	doi:10.1016/j.fsi.2023
+LSAL_HPX2	hpx2	Salmon louse heme peroxidase 2; characterised as a candidate antigen	doi:10.1016/j.fsi.2023
+LSAL_BM86	bm86-like	L. salmonis ortholog of the R. microplus Bm86 midgut glycoprotein, the only clearly effective commercial ectoparasite vaccine antigen	PMC10295593
+LSAL_TLR6	tlr6	TLR-6; tested in published sea lice vaccine work	frontiersin 2025 review
+LSAL_KCCT	kcc-transporter	Potassium chloride and amino acid transporter; tested in published sea lice vaccine work	frontiersin 2025 review

@@ -1,0 +1,89 @@
+# Scoring weights. These encode a judgment, not a result: durability and
+# functional essentiality outrank predicted immunogenicity, because published
+# sea lice trials show initial titer failing to predict protection and effects
+# decaying between months three and twelve.
+#
+# Re-rank under perturbed weights routinely. If the top ten reshuffles when one
+# weight moves by a few points, that instability is a finding and belongs in
+# the output rather than being smoothed over.
+
+weights:
+  essentiality: 20
+  exposure: 20
+  epitope: 15
+  conservation: 10
+  expression_breadth: 10
+  host_dissimilarity: 10
+  literature: 10
+  expressibility: 5
+
+# Each criterion is scored to [0, 1] and multiplied by its weight, so the
+# maximum total is the weight sum (100 as configured).
+
+essentiality:
+  # RNAi coverage is partial. Absence of a knockdown phenotype is absence of
+  # evidence, never evidence of dispensability, so "untested" scores as unknown
+  # (mid-range, flagged) rather than zero.
+  phenotype_scores:
+    lethal: 1.0
+    moulting_defect: 0.9
+    fecundity_reduced: 0.8
+    feeding_impaired: 0.8
+    developmental_delay: 0.6
+    attachment_defect: 0.6
+    no_phenotype: 0.1
+    untested: 0.4
+  ortholog_essentiality_weight: 0.5   # weight of copepod-ortholog evidence
+  untested_flag: "essentiality_unknown"
+
+exposure:
+  class_scores:
+    secretome_confirmed: 1.0      # experimental proteomics, a bonus not a gate
+    signal_peptide: 0.85
+    gpi_anchored: 0.8
+    gut_lumen_facing: 0.9
+    type_I_membrane: 0.7
+    multipass_membrane: 0.5
+    nonclassical_secretion: 0.4
+
+epitope:
+  # Calibrated on mammalian immunology, so weak evidence by construction.
+  # Capped contribution keeps a long protein from winning on epitope count.
+  count_saturation: 8
+  mean_score_weight: 0.5
+  count_weight: 0.5
+
+conservation:
+  # Reciprocal best hit between the two louse species, plus identity held
+  # across the epitope-bearing region.
+  rbh_bonus: 0.5
+  identity_floor_pct: 30.0
+  identity_ceiling_pct: 90.0
+
+expression_breadth:
+  # Rewards constitutive expression across parasitic stages, not peak level:
+  # a stage-restricted target gives the antibody a narrow window to act in.
+  min_tpm: 1.0
+  early_stage_bonus: 0.15
+  early_stages:
+    - copepodid
+    - chalimus_I
+
+host_dissimilarity:
+  # Already a hard filter; here it rewards being far below the threshold.
+  identity_floor_pct: 15.0
+  identity_ceiling_pct: 40.0
+
+literature:
+  # The only Claude-judged axis. Returns a score with written justification
+  # and citations so a reviewer can check the reasoning.
+  default_when_missing: 0.4
+
+expressibility:
+  ideal_length: [100, 600]
+  disulfide_penalty_per_pair: 0.05
+  max_disulfide_penalty: 0.3
+  tm_penalty_per_domain: 0.1
+  max_tm_penalty: 0.4
+  glycosylation_penalty_per_site: 0.02
+  max_glycosylation_penalty: 0.2

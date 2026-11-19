@@ -1,0 +1,144 @@
+# project-blue-sea: antigen discovery pipeline configuration
+#
+# Every path here is resolved relative to `workdir` unless absolute.
+# Reference data is read-only; scratch is re-creatable; results are durable.
+
+workdir: "."
+paths:
+  reference: "resources/reference"   # downloaded proteomes, read-only
+  scratch: "scratch"                 # tool output, safe to delete
+  results: "results"                 # ranked lists + dossiers, durable
+  cache: "cache/llm"                 # API response cache, durable
+  logs: "logs"
+
+species:
+  lsal:
+    label: "Lepeophtheirus salmonis"
+    assembly: "UVic_Lsal_1.0"
+    accession: "GCA_016086655.3"
+    proteome: "lsal/proteins.faa"
+    gff: "lsal/annotation.gff3"
+    expression: "lsal/stage_tpm.tsv"       # gene_id x life stage, TPM
+    rnai: "lsal/rnai_phenotypes.tsv"       # from LiceBase
+  crog:
+    label: "Caligus rogercresseyi"
+    assembly: "ASM1338718v1"
+    accession: "GCA_013387185.1"
+    proteome: "crog/proteins.faa"
+    gff: "crog/annotation.gff3"
+    expression: "crog/stage_tpm.tsv"
+    rnai: null                              # no RNAi resource published
+
+host:
+  label: "Salmo salar"
+  accession: "GCF_905237065.1"
+  proteome: "ssal/proteins.faa"
+
+# Life stages that count as "parasitic" for the expression-breadth criterion.
+life_stages:
+  - copepodid
+  - chalimus_I
+  - chalimus_II
+  - preadult_I
+  - preadult_II
+  - adult_male
+  - adult_female
+
+# ---------------------------------------------------------------------------
+# Filter cascade. Order is cost-ascending: cheap sequence filters run first so
+# the expensive predictors only ever see survivors. Each step writes its own
+# verdict per protein to the audit log, so any drop is traceable to one rule.
+# ---------------------------------------------------------------------------
+cascade:
+  length:
+    min_aa: 50
+    max_aa: 2000
+  exposure:
+    # A protein passes if it is predicted secreted, or is a membrane protein
+    # with a sufficient extracellular/lumenal loop to carry epitopes.
+    signalp_min_prob: 0.5
+    min_extracellular_aa: 50
+    allow_gpi_anchored: true
+    # Non-classical secretion is weaker evidence; kept, but flagged.
+    accept_nonclassical: true
+  host_similarity:
+    # Hard exclusion. A candidate with this much identity to any salmon protein
+    # risks raising autoantibodies in the vaccinated fish.
+    max_identity_pct: 40.0
+    max_evalue: 1.0e-5
+    min_query_coverage: 0.30
+  low_complexity:
+    max_fraction: 0.5
+  epitope:
+    min_linear_epitopes: 2
+    min_epitope_score: 0.5
+    window: 15
+  expression:
+    min_tpm: 1.0
+    min_stages_expressed: 2
+  transmembrane:
+    # Expressibility guard, not an exclusion: >4 TM domains is hard to produce
+    # recombinantly, but such proteins stay in the list with a scoring penalty.
+    warn_above: 4
+
+orthology:
+  # Reciprocal best hits between the two louse proteomes.
+  min_identity_pct: 30.0
+  max_evalue: 1.0e-10
+  # Conservation must hold where it matters: across predicted epitopes.
+  epitope_region_min_identity_pct: 50.0
+
+llm:
+  model: "claude-opus-4-6"
+  max_tokens: 4096
+  temperature: 0.0
+  cache: true
+  dry_run: true          # default; flip explicitly for a spending run
+  budget_usd:
+    annotation: 40.0
+    literature: 220.0
+    dossier: 80.0
+    symbiont: 60.0       # hard cap, <=15% of total
+  # Literature retrieval terms excluded during positive-control benchmarking,
+  # so a known antigen cannot score highly just by being a known antigen.
+  blinded_terms:
+    - vaccine
+    - vaccination
+    - immunization
+    - immunisation
+    - antigen
+    - adjuvant
+    - challenge trial
+
+symbiont:
+  enabled: true
+  # Gate: the track stops here unless the obligate-symbiosis signature appears.
+  signature:
+    min_populations_present: 3
+    max_genome_size_mb: 2.0
+    min_prevalence: 0.95
+    require_pathway_loss: true
+  # Taxa routinely acquired from seawater or salmon mucus; presence alone is
+  # not symbiosis, so these are excluded before the signature is evaluated.
+  environmental_blocklist:
+    - Pseudoalteromonas
+    - Vibrio
+    - Psychrobacter
+    - Flavobacterium
+
+validation:
+  positive_controls: "resources/controls/positive_controls.tsv"
+  negative_controls: "resources/controls/negative_controls.tsv"
+  random_control_n: 200
+  random_seed: 20261118
+  # The gate: known-working antigens must land in the top tier on deterministic
+  # evidence alone, or the rubric is rebuilt before a full run.
+  top_tier_fraction: 0.10
+  min_positive_controls_in_top_tier: 0.60
+  robustness:
+    weight_perturbation_pct: 20
+    n_perturbations: 100
+    leave_one_source_out:
+      - rnai
+      - expression
+      - literature

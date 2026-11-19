@@ -1,0 +1,450 @@
+"""Command-line entry points, one per workflow stage.
+
+Stages hand off through JSON on disk rather than in memory, because the
+deterministic stages run on compute nodes without network and the API stage
+runs somewhere else entirely. Every stage is independently restartable.
+
+    bluesea assemble   --species lsal      # tool output -> records.json
+    bluesea cascade    --species lsal      # apply filters, write audit log
+    bluesea orthology                      # RBH between the two species
+    bluesea literature --species lsal      # API stage (dry-run by default)
+    bluesea rank                           # score, intersect, write ranking
+    bluesea dossiers                       # render the shortlist
+    bluesea benchmark                      # positive/negative/robustness
+    bluesea symbiont-gate                  # go/no-go on the symbiont track
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+from . import io, orthology, provenance, scoring, validation
+from .records import ProteinRecord, from_dict
+
+
+def _paths(config: dict[str, Any]) -> dict[str, Path]:
+    root = Path(config.get("workdir", "."))
+    return {key: root / value for key, value in config["paths"].items()}
+
+
+def _records_path(paths: dict[str, Path], species: str, stage: str) -> Path:
+    return paths["scratch"] / species / f"{stage}.json"
+
+
+def _load_records(path: Path) -> list[ProteinRecord]:
+    with open(path) as handle:
+        return [from_dict(item) for item in json.load(handle)]
+
+
+def _save_records(records: list[ProteinRecord], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as handle:
+        json.dump([record.to_dict() for record in records], handle)
+
+
+# -- assemble --------------------------------------------------------------
+
+
+def cmd_assemble(args: argparse.Namespace) -> int:
+    """Join proteome and predictor output into one record per protein."""
+    config = io.load_config(args.config)
+    paths = _paths(config)
+    species_cfg = config["species"][args.species]
+    reference = paths["reference"]
+    scratch = paths["scratch"] / args.species
+
+    signalp = io.read_signalp(scratch / "signalp.tsv")
+    tmhmm = io.read_deeptmhmm(scratch / "deeptmhmm.gff3")
+    epitopes = io.read_epitopes(scratch / "epitopes.tsv")
+    host_hits = io.read_blast_tabular(scratch / "vs_host.tsv")
+    expression = (
+        io.read_expression(reference / species_cfg["expression"], config["life_stages"])
+        if species_cfg.get("expression")
+        else {}
+    )
+    rnai = (
+        io.read_rnai(reference / species_cfg["rnai"])
+        if species_cfg.get("rnai")
+        else {}
+    )
+    secretome = _read_id_list(scratch / "secretome_confirmed.txt")
+    gpi = _read_id_list(scratch / "gpi_anchored.txt")
+
+    records = []
+    for protein_id, description, sequence in io.read_fasta(
+        reference / species_cfg["proteome"]
+    ):
+        gene_id = _gene_of(protein_id, description)
+        record = ProteinRecord(
+            protein_id=protein_id,
+            gene_id=gene_id,
+            species=args.species,
+            sequence=sequence,
+            description=description,
+            topology=io.topology_from_tools(
+                protein_id, signalp, tmhmm, secretome, gpi
+            ),
+            epitopes=epitopes.get(protein_id, []),
+            host_hit=io.best_host_hit(host_hits.get(protein_id, []), len(sequence)),
+            expression=expression.get(gene_id, {}),
+        )
+        if gene_id in rnai:
+            record.rnai.phenotype = rnai[gene_id]["phenotype"]
+            record.rnai.source = rnai[gene_id]["source"]
+            record.rnai.note = rnai[gene_id]["note"]
+        records.append(record)
+
+    out = _records_path(paths, args.species, "assembled")
+    _save_records(records, out)
+    print(f"assembled {len(records)} proteins -> {out}")
+    return 0
+
+
+def _read_id_list(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    return {line.strip() for line in path.read_text().splitlines() if line.strip()}
+
+
+def _gene_of(protein_id: str, description: str) -> str:
+    """NCBI-style headers carry the gene in a [gene=...] tag; fall back to the
+    protein id so a missing tag never silently collapses genes together."""
+    marker = "[gene="
+    if marker in description:
+        start = description.index(marker) + len(marker)
+        return description[start : description.index("]", start)]
+    return protein_id
+
+
+# -- cascade ---------------------------------------------------------------
+
+
+def cmd_cascade(args: argparse.Namespace) -> int:
+    from .cascade import cascade_summary, run_cascade
+
+    config = io.load_config(args.config)
+    paths = _paths(config)
+    records = _load_records(_records_path(paths, args.species, "assembled"))
+
+    for record in records:
+        run_cascade(record, config["cascade"], stop_on_fail=not args.profile)
+
+    survivors = [record for record in records if record.survived]
+    _save_records(records, _records_path(paths, args.species, "cascaded"))
+    _save_records(survivors, _records_path(paths, args.species, "survivors"))
+
+    summary = cascade_summary(records)
+    io.write_tsv(
+        paths["results"] / args.species / "cascade_summary.tsv",
+        summary,
+        ["step", "entered", "dropped", "survived", "drop_rate"],
+    )
+    # Per-protein audit: every verdict, so any drop traces to one rule.
+    audit = paths["logs"] / args.species / "cascade_audit.jsonl"
+    audit.parent.mkdir(parents=True, exist_ok=True)
+    with open(audit, "w") as handle:
+        for record in records:
+            handle.write(
+                json.dumps(
+                    {
+                        "protein_id": record.protein_id,
+                        "dropped_at": record.dropped_at,
+                        "verdicts": record.verdicts,
+                    }
+                )
+                + "\n"
+            )
+
+    for row in summary:
+        print(
+            f"{row['step']:<16} entered {row['entered']:>6} "
+            f"dropped {row['dropped']:>6} ({row['drop_rate']:.1%})"
+        )
+    print(f"{len(survivors)} survivors -> {audit}")
+    return 0
+
+
+# -- orthology -------------------------------------------------------------
+
+
+def cmd_orthology(args: argparse.Namespace) -> int:
+    config = io.load_config(args.config)
+    paths = _paths(config)
+    species = list(config["species"])
+    if len(species) != 2:
+        print("orthology expects exactly two species", file=sys.stderr)
+        return 2
+    first, second = species
+
+    forward = io.read_blast_tabular(paths["scratch"] / f"{first}_vs_{second}.tsv")
+    reverse = io.read_blast_tabular(paths["scratch"] / f"{second}_vs_{first}.tsv")
+    pairs = orthology.reciprocal_best_hits(forward, reverse, config["orthology"])
+    reverse_pairs = orthology.reciprocal_best_hits(
+        reverse, forward, config["orthology"]
+    )
+
+    for source, partner, table in (
+        (first, second, pairs),
+        (second, first, reverse_pairs),
+    ):
+        path = _records_path(paths, source, "survivors")
+        records = {r.protein_id: r for r in _load_records(path)}
+        orthology.attach_orthologs(records, table, partner, config["orthology"])
+        _save_records(list(records.values()), path)
+
+    n_reciprocal = sum(1 for pair in pairs.values() if pair["reciprocal"])
+    print(f"{len(pairs)} ortholog pairs, {n_reciprocal} reciprocal best hits")
+    return 0
+
+
+# -- literature (API stage) ------------------------------------------------
+
+
+def cmd_literature(args: argparse.Namespace) -> int:
+    from .literature import assess_all
+    from .llm import client_from_config
+
+    config = io.load_config(args.config)
+    paths = _paths(config)
+    client = client_from_config(
+        config,
+        {"cache": paths["cache"]},
+        dry_run=not args.live,
+    )
+    records = _load_records(_records_path(paths, args.species, "survivors"))
+    assess_all(
+        records,
+        client,
+        blinded=args.blinded,
+        blinded_terms=config["llm"]["blinded_terms"],
+    )
+    _save_records(records, _records_path(paths, args.species, "survivors"))
+
+    report = client.report()
+    (paths["logs"] / f"llm_usage_{args.species}.json").parent.mkdir(
+        parents=True, exist_ok=True
+    )
+    (paths["logs"] / f"llm_usage_{args.species}.json").write_text(
+        json.dumps(report, indent=2)
+    )
+    print(json.dumps(report, indent=2))
+    if report["dry_run"]:
+        print(
+            "\nDry run: nothing was called. Re-run with --live to spend.",
+            file=sys.stderr,
+        )
+    return 0
+
+
+# -- rank ------------------------------------------------------------------
+
+
+def cmd_rank(args: argparse.Namespace) -> int:
+    config = io.load_config(args.config)
+    weights_cfg = io.load_config(args.weights)
+    paths = _paths(config)
+
+    per_species: dict[str, list[ProteinRecord]] = {}
+    for species in config["species"]:
+        records = _load_records(_records_path(paths, species, "survivors"))
+        per_species[species] = scoring.rank(records, weights_cfg)
+
+    # Flag the intersection before writing: a cross-species candidate is the
+    # set worth reading first, and the flag has to be on the record for the
+    # ranking table and the dossier to show it.
+    names = list(per_species)
+    if len(names) == 2:
+        shared = orthology.intersect_shortlists(
+            per_species[names[0]], per_species[names[1]]
+        )
+        print(f"{len(shared)} cross-species candidates")
+
+    everything: list[ProteinRecord] = []
+    for species, records in per_species.items():
+        ranked = scoring.rank(records, weights_cfg)
+        _save_records(ranked, _records_path(paths, species, "ranked"))
+        io.write_tsv(
+            paths["results"] / species / "ranked.tsv",
+            scoring.ranking_rows(ranked),
+            scoring.RANKING_COLUMNS,
+        )
+        everything.extend(ranked)
+
+    combined = sorted(everything, key=lambda r: r.total_score, reverse=True)
+    io.write_tsv(
+        paths["results"] / "ranked_all.tsv",
+        scoring.ranking_rows(combined),
+        scoring.RANKING_COLUMNS,
+    )
+    provenance.write(
+        provenance.collect(args.config, args.weights),
+        paths["results"] / "provenance.json",
+    )
+    print(f"ranked {len(combined)} candidates -> {paths['results']}/ranked_all.tsv")
+    return 0
+
+
+# -- dossiers --------------------------------------------------------------
+
+
+def cmd_dossiers(args: argparse.Namespace) -> int:
+    from .dossier import write_dossiers
+
+    config = io.load_config(args.config)
+    weights_cfg = io.load_config(args.weights)
+    paths = _paths(config)
+
+    records: list[ProteinRecord] = []
+    for species in config["species"]:
+        path = _records_path(paths, species, "ranked")
+        if path.exists():
+            records.extend(_load_records(path))
+    records.sort(key=lambda r: r.total_score, reverse=True)
+
+    trail = provenance.collect(args.config, args.weights)
+    written = write_dossiers(
+        records[: args.top], paths["results"] / "dossiers", weights_cfg["weights"], trail
+    )
+    print(f"wrote {len(written)} dossiers -> {paths['results']}/dossiers")
+    return 0
+
+
+# -- benchmark -------------------------------------------------------------
+
+
+def cmd_benchmark(args: argparse.Namespace) -> int:
+    config = io.load_config(args.config)
+    weights_cfg = io.load_config(args.weights)
+    paths = _paths(config)
+    validation_cfg = config["validation"]
+
+    records: list[ProteinRecord] = []
+    for species in config["species"]:
+        path = _records_path(paths, species, "cascaded")
+        if path.exists():
+            records.extend(_load_records(path))
+
+    positives = {
+        row["protein_id"] for row in io.read_tsv(validation_cfg["positive_controls"])
+    }
+    negatives = {
+        row["protein_id"]: row["expected_drop_step"]
+        for row in io.read_tsv(validation_cfg["negative_controls"])
+    }
+    random_ids = _sample_random_controls(records, validation_cfg, positives, negatives)
+
+    report = validation.run_benchmark(
+        records, weights_cfg, validation_cfg, positives, negatives, random_ids
+    )
+    out = paths["results"] / "benchmark.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=2))
+
+    print(json.dumps({k: v for k, v in report.items() if k != "criteria"}, indent=2))
+    if not report["gate_passed"]:
+        # Non-zero exit stops the workflow here on purpose. A failed gate means
+        # rebuild the rubric, not press on to the full run.
+        print(
+            "\nGATE FAILED: known-working antigens did not reach the top tier "
+            "on deterministic evidence. Rebuild the rubric before the full run.",
+            file=sys.stderr,
+        )
+        return 1
+    print("\nGate passed.")
+    return 0
+
+
+def _sample_random_controls(
+    records: list[ProteinRecord],
+    validation_cfg: dict[str, Any],
+    positives: set[str],
+    negatives: dict[str, str],
+) -> set[str]:
+    import random
+
+    rng = random.Random(validation_cfg["random_seed"])
+    pool = [
+        record.protein_id
+        for record in records
+        if record.survived
+        and record.protein_id not in positives
+        and record.protein_id not in negatives
+    ]
+    n = min(validation_cfg["random_control_n"], len(pool))
+    return set(rng.sample(pool, n)) if n else set()
+
+
+# -- symbiont --------------------------------------------------------------
+
+
+def cmd_symbiont_gate(args: argparse.Namespace) -> int:
+    from .symbiont import MAG, gate
+
+    config = io.load_config(args.config)
+    paths = _paths(config)
+    with open(args.mags) as handle:
+        mags = [MAG(**item) for item in json.load(handle)]
+
+    report = gate(mags, config["symbiont"])
+    out = paths["results"] / "symbiont_gate.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=2))
+    print(report["conclusion"])
+    # A no-go is the expected result and not an error, so this exits 0 either
+    # way; the workflow reads `proceed` from the JSON.
+    return 0
+
+
+# -- argument parsing ------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="bluesea", description=__doc__)
+    parser.add_argument("--config", default="config/config.yaml")
+    parser.add_argument("--weights", default="config/weights.yaml")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    def add(name: str, func, species: bool = False):
+        sub = subparsers.add_parser(name)
+        sub.set_defaults(func=func)
+        if species:
+            sub.add_argument("--species", required=True)
+        return sub
+
+    add("assemble", cmd_assemble, species=True)
+    cascade = add("cascade", cmd_cascade, species=True)
+    cascade.add_argument(
+        "--profile",
+        action="store_true",
+        help="run every step on every protein to see independent drop rates",
+    )
+    add("orthology", cmd_orthology)
+    literature = add("literature", cmd_literature, species=True)
+    literature.add_argument(
+        "--live", action="store_true", help="actually call the API (default: dry run)"
+    )
+    literature.add_argument(
+        "--blinded",
+        action="store_true",
+        help="exclude vaccine terms; required for positive-control benchmarking",
+    )
+    add("rank", cmd_rank)
+    dossiers = add("dossiers", cmd_dossiers)
+    dossiers.add_argument("--top", type=int, default=45)
+    add("benchmark", cmd_benchmark)
+    symbiont = add("symbiont-gate", cmd_symbiont_gate)
+    symbiont.add_argument("--mags", required=True)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

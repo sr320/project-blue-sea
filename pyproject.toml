@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bluesea"
+version = "0.1.0"
+description = "Reverse-vaccinology antigen screen of the sea louse proteome"
+requires-python = ">=3.10"
+dependencies = ["pyyaml>=6.0"]
+
+[project.optional-dependencies]
+api = ["anthropic>=0.40"]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+bluesea = "bluesea.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 90
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ISC", "C4", "RUF"]
+# C408: dict(...) with keyword arguments reads better than a literal for the
+# test fixtures whose defaults get **kwargs-merged.
+ignore = ["C408", "RUF001"]  # RUF001: en dashes are intentional in user-facing prose

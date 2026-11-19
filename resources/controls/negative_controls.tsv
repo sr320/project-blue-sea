@@ -1,0 +1,12 @@
+# Each control must be dropped, and by the named step. Being dropped for the
+# wrong reason is a failure: a salmon protein rejected by the exposure filter
+# tells us nothing about whether the cross-reactivity filter works.
+protein_id	class	expected_drop_step	rationale
+SSAL_ACTB	host_spike	host_similarity	Salmon beta-actin; must be rejected as host-identical
+SSAL_TUBA	host_spike	host_similarity	Salmon alpha-tubulin; must be rejected as host-identical
+SSAL_GAPDH	host_spike	host_similarity	Salmon GAPDH; must be rejected as host-identical
+SSAL_HSP70	host_spike	host_similarity	Salmon HSP70; highly conserved, must still be rejected
+LSAL_RPL7	housekeeping	exposure	Louse cytoplasmic ribosomal protein; no secretion signal
+LSAL_EF1A	housekeeping	exposure	Louse elongation factor 1-alpha; cytoplasmic
+LSAL_HISTH3	housekeeping	exposure	Louse histone H3; nuclear, no route to host antibody
+LSAL_PROTEASOME_B1	housekeeping	exposure	Louse 20S proteasome subunit; cytoplasmic

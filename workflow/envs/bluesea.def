@@ -1,0 +1,28 @@
+Bootstrap: docker
+From: mambaorg/micromamba:1.5.8
+
+# Pinned so the workflow reruns years from now. Record the built image's
+# digest in BLUESEA_CONTAINER_DIGEST; provenance.collect() reads it.
+
+%files
+    workflow/envs/environment.yml /tmp/environment.yml
+    pyproject.toml /opt/bluesea/pyproject.toml
+    src /opt/bluesea/src
+
+%post
+    micromamba install -y -n base -f /tmp/environment.yml
+    micromamba clean --all --yes
+    /opt/conda/bin/python -m pip install --no-deps /opt/bluesea
+
+%environment
+    export PATH=/opt/conda/bin:$PATH
+    export PYTHONDONTWRITEBYTECODE=1
+
+%labels
+    Name bluesea
+    Description Sea lice antigen discovery pipeline
+
+%test
+    bluesea --help
+    diamond --version
+    seqkit version

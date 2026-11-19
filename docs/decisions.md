@@ -1,0 +1,50 @@
+# Open decisions
+
+Two of these change the build; the rest change the deliverable or the budget.
+
+- [ ] **Standalone project, or preliminary-data arm of a specific proposal?**
+      Changes the deliverable and the timeline more than anything else here.
+- [x] **Both species.** *L. salmonis* and *C. rogercresseyi* run through the
+      same cascade and their shortlists are intersected. Implemented:
+      `config.yaml:species`, `orthology.intersect_shortlists`.
+- [ ] **Who runs wet-lab validation, and is there a collaborator for challenge
+      trials?** Steps 1–3 of the bench sequence are plausibly in-house; step 4
+      is not.
+- [ ] **Total API budget ceiling for the first full run.** Currently
+      `config.yaml:llm.budget_usd` sums to $400 with the symbiont arm capped
+      at $60 (15%). These are planning placeholders, not a quote.
+- [ ] **Public GitHub repo from the first commit, or after the first validated
+      run?** Affects nothing in the code; affects when the negative results
+      become citable.
+
+## Build-affecting notes
+
+**Verify before building further**: Hyak compute nodes do not reliably have
+outbound internet access. The architecture already assumes they do not — the
+API stage is separate and reads tool output from disk — so if that assumption
+turns out to be wrong, nothing breaks. If it is right, nothing needs
+rearranging.
+
+**Secretome data is thin.** There is no comprehensive, stage-resolved
+*L. salmonis* secretome. The pipeline predicts it computationally and treats
+experimental confirmation as a scoring bonus (`exposure.class_scores.
+secretome_confirmed`), never a requirement. Drop confirmed accessions into
+`scratch/<species>/secretome_confirmed.txt` as they become available.
+
+**RNAi coverage is partial.** `weights.yaml:essentiality.phenotype_scores`
+maps `untested` to 0.4, above `no_phenotype` at 0.1, and flags the record.
+Do not "fix" this by setting it to zero.
+
+## Bench sequence, cheapest discriminator first
+
+1. **RNAi knockdown in copepodids or pre-adults.** Directly tests the
+   essentiality axis, which carries the most weight and the most uncertainty.
+   A candidate whose knockdown produces no phenotype should probably not
+   advance regardless of score.
+2. **Recombinant expression and antibody generation.** Immunohistochemistry
+   here is the check on the exposure axis.
+3. **In vitro or ex vivo antibody challenge**, if a louse culture system
+   allows it, before committing to a fish trial.
+4. **Immunization and challenge trial.** The only step that tests the actual
+   claim. Design to twelve months, not three — that is where every reported
+   effect has decayed.
