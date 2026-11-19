@@ -4,6 +4,7 @@ Stages hand off through JSON on disk rather than in memory, because the
 deterministic stages run on compute nodes without network and the API stage
 runs somewhere else entirely. Every stage is independently restartable.
 
+    bluesea prefilter  --species lsal      # cheap filters -> survivor FASTA
     bluesea assemble   --species lsal      # tool output -> records.json
     bluesea cascade    --species lsal      # apply filters, write audit log
     bluesea orthology                      # RBH between the two species
@@ -46,19 +47,116 @@ def _save_records(records: list[ProteinRecord], path: Path) -> None:
         json.dump([record.to_dict() for record in records], handle)
 
 
+# -- prefilter -------------------------------------------------------------
+
+
+def cmd_prefilter(args: argparse.Namespace) -> int:
+    """Run the cheap half of the cascade and emit the survivor FASTA.
+
+    This is the step that keeps epitope prediction and the salmon homology
+    search off the ~8 proteins in 9 that cannot reach host antibody anyway.
+    It needs only SignalP and DeepTMHMM, which have to run proteome-wide
+    because the exposure filter is built on them.
+
+    Every protein -- dropped or not -- is written to `prefiltered.json` with
+    its verdicts, so the audit log and the negative controls still account for
+    the whole proteome once the later stages have run.
+    """
+    from .cascade import run_cascade, steps_for
+
+    config = io.load_config(args.config)
+    paths = _paths(config)
+    species_cfg = config["species"][args.species]
+    cascade_cfg = config["cascade"]
+    reference = paths["reference"]
+    scratch = paths["scratch"] / args.species
+
+    signalp = io.read_signalp(scratch / "signalp.tsv")
+    tmhmm = io.read_deeptmhmm(scratch / "deeptmhmm.gff3")
+    secretome = _read_id_list(scratch / "secretome_confirmed.txt")
+    gpi = _read_id_list(scratch / "gpi_anchored.txt")
+
+    records = []
+    for protein_id, description, sequence in io.read_fasta(
+        reference / species_cfg["proteome"]
+    ):
+        record = ProteinRecord(
+            protein_id=protein_id,
+            gene_id=_gene_of(protein_id, description),
+            species=args.species,
+            sequence=sequence,
+            description=description,
+            topology=io.topology_from_tools(
+                protein_id, signalp, tmhmm, secretome, gpi
+            ),
+        )
+        run_cascade(
+            record,
+            cascade_cfg,
+            stop_on_fail=not args.profile,
+            phase="prefilter",
+        )
+        records.append(record)
+
+    _save_records(records, _records_path(paths, args.species, "prefiltered"))
+
+    # With the prefilter disabled the full proteome goes to the predictors and
+    # nothing is skipped. It is the expensive way to run, and the point of it
+    # is to measure what the exposure filter costs in false negatives -- pair
+    # it with `cascade --profile` so the later steps still return a verdict on
+    # proteins exposure rejected.
+    enabled = cascade_cfg.get("prefilter", {}).get("enabled", True)
+    forwarded = [r for r in records if r.survived] if enabled else list(records)
+
+    out_fasta = scratch / "candidates.faa"
+    out_fasta.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_fasta, "w") as handle:
+        for record in forwarded:
+            handle.write(f">{record.protein_id} {record.description}\n")
+            for start in range(0, len(record.sequence), 60):
+                handle.write(record.sequence[start : start + 60] + "\n")
+
+    for step_name, _, _ in steps_for("prefilter"):
+        dropped = sum(1 for r in records if r.dropped_at == step_name)
+        print(f"{step_name:<16} dropped {dropped:>6}")
+    kept = sum(1 for r in records if r.survived)
+    print(
+        f"{kept}/{len(records)} proteins reach the predictors "
+        f"({kept / len(records):.1%}) -> {out_fasta}"
+        if records
+        else f"no proteins read from {species_cfg['proteome']}"
+    )
+
+    if not forwarded:
+        # An empty FASTA would produce empty predictor output, an empty
+        # ranking and no error anywhere. Stop here instead.
+        print(
+            "\nNo proteins survived the prefilter. Check the SignalP and "
+            "DeepTMHMM output before rerunning.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 # -- assemble --------------------------------------------------------------
 
 
 def cmd_assemble(args: argparse.Namespace) -> int:
-    """Join proteome and predictor output into one record per protein."""
+    """Attach the candidate-stage predictor output to the prefiltered records.
+
+    The epitope and salmon-homology tables cover only the proteins the
+    prefilter forwarded, so proteins dropped before this point simply carry no
+    such evidence. They stay in the record set to keep the audit complete.
+    """
     config = io.load_config(args.config)
     paths = _paths(config)
     species_cfg = config["species"][args.species]
     reference = paths["reference"]
     scratch = paths["scratch"] / args.species
 
-    signalp = io.read_signalp(scratch / "signalp.tsv")
-    tmhmm = io.read_deeptmhmm(scratch / "deeptmhmm.gff3")
+    records = _load_records(_records_path(paths, args.species, "prefiltered"))
+
     epitopes = io.read_epitopes(scratch / "epitopes.tsv")
     host_hits = io.read_blast_tabular(scratch / "vs_host.tsv")
     expression = (
@@ -71,36 +169,31 @@ def cmd_assemble(args: argparse.Namespace) -> int:
         if species_cfg.get("rnai")
         else {}
     )
-    secretome = _read_id_list(scratch / "secretome_confirmed.txt")
-    gpi = _read_id_list(scratch / "gpi_anchored.txt")
 
-    records = []
-    for protein_id, description, sequence in io.read_fasta(
-        reference / species_cfg["proteome"]
-    ):
-        gene_id = _gene_of(protein_id, description)
-        record = ProteinRecord(
-            protein_id=protein_id,
-            gene_id=gene_id,
-            species=args.species,
-            sequence=sequence,
-            description=description,
-            topology=io.topology_from_tools(
-                protein_id, signalp, tmhmm, secretome, gpi
-            ),
-            epitopes=epitopes.get(protein_id, []),
-            host_hit=io.best_host_hit(host_hits.get(protein_id, []), len(sequence)),
-            expression=expression.get(gene_id, {}),
+    # Mirror the prefilter's own forwarding rule, so the records enriched here
+    # are exactly the ones the predictors were given. A protein can legitimately
+    # be absent from both tables -- no predicted epitopes, no salmon homolog --
+    # and must still pick up its expression and RNAi evidence.
+    enabled = config["cascade"].get("prefilter", {}).get("enabled", True)
+
+    enriched = 0
+    for record in records:
+        if enabled and not record.survived:
+            continue
+        record.epitopes = epitopes.get(record.protein_id, [])
+        record.host_hit = io.best_host_hit(
+            host_hits.get(record.protein_id, []), record.length
         )
-        if gene_id in rnai:
-            record.rnai.phenotype = rnai[gene_id]["phenotype"]
-            record.rnai.source = rnai[gene_id]["source"]
-            record.rnai.note = rnai[gene_id]["note"]
-        records.append(record)
+        record.expression = expression.get(record.gene_id, {})
+        if record.gene_id in rnai:
+            record.rnai.phenotype = rnai[record.gene_id]["phenotype"]
+            record.rnai.source = rnai[record.gene_id]["source"]
+            record.rnai.note = rnai[record.gene_id]["note"]
+        enriched += 1
 
     out = _records_path(paths, args.species, "assembled")
     _save_records(records, out)
-    print(f"assembled {len(records)} proteins -> {out}")
+    print(f"assembled {enriched} candidates of {len(records)} proteins -> {out}")
     return 0
 
 
@@ -130,8 +223,13 @@ def cmd_cascade(args: argparse.Namespace) -> int:
     paths = _paths(config)
     records = _load_records(_records_path(paths, args.species, "assembled"))
 
+    # The prefilter already recorded verdicts for length, low_complexity and
+    # exposure; this appends the rest in cascade order, so the verdict list
+    # reads exactly as it did when one process ran all seven steps.
     for record in records:
-        run_cascade(record, config["cascade"], stop_on_fail=not args.profile)
+        run_cascade(
+            record, config["cascade"], stop_on_fail=not args.profile, phase="post"
+        )
 
     survivors = [record for record in records if record.survived]
     _save_records(records, _records_path(paths, args.species, "cascaded"))
@@ -264,8 +362,7 @@ def cmd_rank(args: argparse.Namespace) -> int:
         print(f"{len(shared)} cross-species candidates")
 
     everything: list[ProteinRecord] = []
-    for species, records in per_species.items():
-        ranked = scoring.rank(records, weights_cfg)
+    for species, ranked in per_species.items():
         _save_records(ranked, _records_path(paths, species, "ranked"))
         io.write_tsv(
             paths["results"] / species / "ranked.tsv",
@@ -415,12 +512,22 @@ def build_parser() -> argparse.ArgumentParser:
             sub.add_argument("--species", required=True)
         return sub
 
+    prefilter = add("prefilter", cmd_prefilter, species=True)
+    prefilter.add_argument(
+        "--profile",
+        action="store_true",
+        help="run every prefilter step on every protein to see independent drop rates",
+    )
     add("assemble", cmd_assemble, species=True)
     cascade = add("cascade", cmd_cascade, species=True)
     cascade.add_argument(
         "--profile",
         action="store_true",
-        help="run every step on every protein to see independent drop rates",
+        help=(
+            "run every remaining step on every protein the predictors saw, to see "
+            "independent drop rates; pair with cascade.prefilter.enabled=false to "
+            "measure what the exposure filter costs"
+        ),
     )
     add("orthology", cmd_orthology)
     literature = add("literature", cmd_literature, species=True)

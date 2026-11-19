@@ -8,6 +8,12 @@ dropped it and that rule can be revisited without rerunning the predictors.
 Order is cost-ascending. The exposure step does most of the cutting and is
 also the least certain -- predicted secretion is not confirmed secretion --
 so it is the first place to look when the survivor count comes out wrong.
+
+The cascade runs in two phases (see PREFILTER_STEPS), split where the cost of
+the evidence jumps: everything up to and including exposure needs only SignalP
+and DeepTMHMM, which must run proteome-wide regardless, while the steps after
+it need epitope prediction and a salmon homology search. Splitting there is
+what lets those two run on the ~1 protein in 9 that reaches them.
 """
 
 from __future__ import annotations
@@ -223,18 +229,50 @@ CASCADE: list[tuple[str, str, Step]] = [
     ("transmembrane", "transmembrane", annotate_expressibility),
 ]
 
+# The cascade splits in two, and the split is what keeps the workflow honest
+# about "expensive predictors only ever see survivors".
+#
+# These three steps need nothing but the proteome, SignalP and DeepTMHMM --
+# which have to run on every protein anyway, because exposure depends on them.
+# Everything after exposure needs BepiPred or a DIAMOND search against the
+# salmon proteome, and exposure cuts roughly eight proteins in nine, so those
+# predictors run against the survivor set instead of the whole proteome.
+PREFILTER_STEPS = ("length", "low_complexity", "exposure")
+
+PHASES = ("all", "prefilter", "post")
+
+
+def steps_for(phase: str = "all") -> list[tuple[str, str, Step]]:
+    """The cascade steps belonging to one phase, in cascade order."""
+    if phase == "all":
+        return list(CASCADE)
+    if phase == "prefilter":
+        return [step for step in CASCADE if step[0] in PREFILTER_STEPS]
+    if phase == "post":
+        return [step for step in CASCADE if step[0] not in PREFILTER_STEPS]
+    raise ValueError(f"unknown cascade phase {phase!r}; expected one of {PHASES}")
+
 
 def run_cascade(
-    record: ProteinRecord, cascade_cfg: dict[str, Any], stop_on_fail: bool = True
+    record: ProteinRecord,
+    cascade_cfg: dict[str, Any],
+    stop_on_fail: bool = True,
+    phase: str = "all",
 ) -> ProteinRecord:
-    """Apply every step, recording a verdict for each.
+    """Apply the phase's steps, recording a verdict for each.
 
     With `stop_on_fail` the remaining steps are skipped once one fails, which
     is what the production run wants: the expensive predictors never see a
     protein that is already excluded. Set it False to profile the cascade and
     see how much each step would have cut independently.
+
+    `phase` selects half the cascade. The verdict list is appended to across
+    both calls, so a record that goes through "prefilter" and then "post"
+    carries the same verdicts, in the same order, as one put through "all" --
+    which is what lets the audit log and the negative controls stay meaningful
+    after the workflow was split.
     """
-    for step_name, cfg_key, step in CASCADE:
+    for step_name, cfg_key, step in steps_for(phase):
         if stop_on_fail and not record.survived:
             break
         passed, reason, detail = step(record, cascade_cfg[cfg_key])

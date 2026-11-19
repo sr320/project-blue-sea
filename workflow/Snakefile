@@ -23,10 +23,12 @@ SCRATCH = config["paths"]["scratch"]
 RESULTS = config["paths"]["results"]
 HOST_PROTEOME = os.path.join(REFERENCE, config["host"]["proteome"])
 
-# Shard count for the per-protein predictors. Tune to the queue, not to the
-# proteome: more shards means more jobs, not less work.
+# Shard counts for the per-protein predictors. Tune to the queue, not to the
+# proteome: more shards means more jobs, not less work. `seqkit split2` numbers
+# its parts from 001, so the shard ids do too.
 N_SHARDS = config.get("n_shards", 50)
-SHARDS = [f"{i:03d}" for i in range(N_SHARDS)]
+N_SHARDS_CANDIDATES = config.get("n_shards_candidates", 10)
+SHARDS = [f"{i:03d}" for i in range(1, N_SHARDS + 1)]
 
 CONTAINER = "containers/bluesea.sif"
 
@@ -35,10 +37,15 @@ CONTAINER = "containers/bluesea.sif"
 # login node with outbound access, while every other rule is submitted to
 # compute nodes that may have none. A resource constraint could not do this --
 # it caps concurrency, it does not place a job.
+#
+# The two merges are local because they are `cat` and submitting them costs
+# more in queue latency than running them. `orthology` is not: it parses both
+# DIAMOND tables and rewrites every survivor record, which is real work and
+# does not belong on a shared login node.
 localrules:
     literature,
-    merge_shards,
-    orthology,
+    merge_topology,
+    merge_candidate_predictions,
 
 
 rule all:
@@ -56,23 +63,38 @@ rule gate:
 
 
 # ---------------------------------------------------------------------------
-# Stage 1 -- deterministic predictors, no network
+# Stage 1a -- topology, proteome-wide
+#
+# SignalP and DeepTMHMM have to see every protein, because the exposure filter
+# is built on them and that filter is what decides who the expensive
+# predictors get to skip.
 # ---------------------------------------------------------------------------
 
 
-checkpoint shard_proteome:
+rule shard_proteome:
     input:
         proteome=lambda wc: os.path.join(
             REFERENCE, config["species"][wc.species]["proteome"]
         ),
     output:
-        directory(f"{SCRATCH}/{{species}}/shards"),
+        # Named explicitly rather than as a directory: the proteome always has
+        # far more sequences than shards, so the part list is known up front,
+        # and Snakemake can then see which rule produces each shard.
+        expand(f"{SCRATCH}/{{{{species}}}}/shards/part_{{shard}}.faa", shard=SHARDS),
+    params:
+        n=N_SHARDS,
+        outdir=f"{SCRATCH}/{{species}}/shards",
     container:
         CONTAINER
     shell:
         """
-        mkdir -p {output}
-        seqkit split2 --by-part {N_SHARDS} --out-dir {output} {input.proteome}
+        mkdir -p {params.outdir}
+        seqkit split2 --by-part {params.n} --out-dir {params.outdir} {input.proteome}
+        # seqkit names each part after the input file (proteins.part_001.faa);
+        # downstream rules match on the shard number alone.
+        for part in {params.outdir}/*.part_*; do
+            mv "$part" "{params.outdir}/part_${{part##*.part_}}"
+        done
         """
 
 
@@ -109,9 +131,77 @@ rule deeptmhmm:
         "mv $(dirname {output})/predicted_topologies.3line {output}"
 
 
+rule merge_topology:
+    input:
+        signalp=expand(
+            f"{SCRATCH}/{{{{species}}}}/signalp/{{shard}}.tsv", shard=SHARDS
+        ),
+        tmhmm=expand(
+            f"{SCRATCH}/{{{{species}}}}/deeptmhmm/{{shard}}.gff3", shard=SHARDS
+        ),
+    output:
+        signalp=f"{SCRATCH}/{{species}}/signalp.tsv",
+        tmhmm=f"{SCRATCH}/{{species}}/deeptmhmm.gff3",
+    shell:
+        """
+        cat {input.signalp} > {output.signalp}
+        cat {input.tmhmm} > {output.tmhmm}
+        """
+
+
+# ---------------------------------------------------------------------------
+# Stage 1b -- the prefilter, and the predictors that run behind it
+#
+# This is the split that makes the README's claim true: epitope prediction and
+# the salmon homology search only ever see proteins that passed length,
+# low-complexity and exposure. Exposure alone cuts about eight in nine, so
+# these two rules do roughly a ninth of the work they used to.
+# ---------------------------------------------------------------------------
+
+
+rule prefilter:
+    input:
+        signalp=f"{SCRATCH}/{{species}}/signalp.tsv",
+        tmhmm=f"{SCRATCH}/{{species}}/deeptmhmm.gff3",
+        proteome=lambda wc: os.path.join(
+            REFERENCE, config["species"][wc.species]["proteome"]
+        ),
+    output:
+        records=f"{SCRATCH}/{{species}}/prefiltered.json",
+        candidates=f"{SCRATCH}/{{species}}/candidates.faa",
+    resources:
+        mem_mb=8000,
+        runtime=60,
+    container:
+        CONTAINER
+    shell:
+        "bluesea --config config/config.yaml prefilter --species {wildcards.species}"
+
+
+checkpoint shard_candidates:
+    """A checkpoint in earnest: how many proteins clear the prefilter is not
+    known until it has run, so the shard list cannot be built in advance."""
+    input:
+        f"{SCRATCH}/{{species}}/candidates.faa",
+    output:
+        directory(f"{SCRATCH}/{{species}}/candidate_shards"),
+    params:
+        n=N_SHARDS_CANDIDATES,
+    container:
+        CONTAINER
+    shell:
+        """
+        mkdir -p {output}
+        seqkit split2 --by-part {params.n} --out-dir {output} {input}
+        for part in {output}/*.part_*; do
+            mv "$part" "{output}/part_${{part##*.part_}}"
+        done
+        """
+
+
 rule epitopes:
     input:
-        f"{SCRATCH}/{{species}}/shards/part_{{shard}}.faa",
+        f"{SCRATCH}/{{species}}/candidate_shards/part_{{shard}}.faa",
     output:
         f"{SCRATCH}/{{species}}/epitopes/{{shard}}.tsv",
     threads: 2
@@ -130,9 +220,11 @@ rule host_blast:
 
     Sensitive mode on purpose: a missed salmon homolog is a candidate that
     should never have survived, which is far worse here than a slow search.
+    Restricting it to prefilter survivors misses nothing -- a protein with no
+    route to host antibody is already excluded on that ground.
     """
     input:
-        query=f"{SCRATCH}/{{species}}/shards/part_{{shard}}.faa",
+        query=f"{SCRATCH}/{{species}}/candidate_shards/part_{{shard}}.faa",
         db=f"{REFERENCE}/ssal/ssal.dmnd",
     output:
         f"{SCRATCH}/{{species}}/vs_host/{{shard}}.tsv",
@@ -148,30 +240,26 @@ rule host_blast:
         f"--evalue {config['cascade']['host_similarity']['max_evalue']}"
 
 
-def shard_outputs(wildcards, subdir, extension):
-    checkpoints.shard_proteome.get(species=wildcards.species)
+def candidate_shards(wildcards, subdir, extension):
+    """Expand over the shards the prefilter actually produced."""
+    shard_dir = checkpoints.shard_candidates.get(species=wildcards.species).output[0]
+    shards = glob_wildcards(os.path.join(shard_dir, "part_{shard}.faa")).shard
     return expand(
         f"{SCRATCH}/{{species}}/{subdir}/{{shard}}.{extension}",
         species=wildcards.species,
-        shard=SHARDS,
+        shard=sorted(shards),
     )
 
 
-rule merge_shards:
+rule merge_candidate_predictions:
     input:
-        signalp=lambda wc: shard_outputs(wc, "signalp", "tsv"),
-        tmhmm=lambda wc: shard_outputs(wc, "deeptmhmm", "gff3"),
-        epitopes=lambda wc: shard_outputs(wc, "epitopes", "tsv"),
-        host=lambda wc: shard_outputs(wc, "vs_host", "tsv"),
+        epitopes=lambda wc: candidate_shards(wc, "epitopes", "tsv"),
+        host=lambda wc: candidate_shards(wc, "vs_host", "tsv"),
     output:
-        signalp=f"{SCRATCH}/{{species}}/signalp.tsv",
-        tmhmm=f"{SCRATCH}/{{species}}/deeptmhmm.gff3",
         epitopes=f"{SCRATCH}/{{species}}/epitopes.tsv",
         host=f"{SCRATCH}/{{species}}/vs_host.tsv",
     shell:
         """
-        cat {input.signalp} > {output.signalp}
-        cat {input.tmhmm} > {output.tmhmm}
         head -n 1 {input.epitopes[0]} > {output.epitopes}
         tail -q -n +2 {input.epitopes} >> {output.epitopes}
         cat {input.host} > {output.host}
@@ -180,12 +268,14 @@ rule merge_shards:
 
 rule assemble:
     input:
-        signalp=f"{SCRATCH}/{{species}}/signalp.tsv",
-        tmhmm=f"{SCRATCH}/{{species}}/deeptmhmm.gff3",
+        records=f"{SCRATCH}/{{species}}/prefiltered.json",
         epitopes=f"{SCRATCH}/{{species}}/epitopes.tsv",
         host=f"{SCRATCH}/{{species}}/vs_host.tsv",
     output:
         f"{SCRATCH}/{{species}}/assembled.json",
+    resources:
+        mem_mb=8000,
+        runtime=60,
     container:
         CONTAINER
     shell:
