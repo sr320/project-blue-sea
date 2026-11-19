@@ -58,6 +58,16 @@ pip install -e '.[dev]'
 pytest
 ```
 
+On the cluster, run the pre-flight checks first — they confirm the account,
+the bind path, and whether compute nodes really lack outbound access, which
+is the assumption the whole architecture rests on:
+
+```bash
+bash scripts/hyak_preflight.sh --account srlab --partition compute
+```
+
+See [docs/hyak.md](docs/hyak.md) for what each check means.
+
 The workflow is three stages, split because Hyak compute nodes cannot be
 assumed to have outbound network access:
 
