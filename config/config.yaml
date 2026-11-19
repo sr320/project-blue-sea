@@ -35,6 +35,12 @@ host:
   proteome: "ssal/proteins.faa"
 
 # Life stages that count as "parasitic" for the expression-breadth criterion.
+# Shard counts for the per-protein predictors. Tune to the queue, not to the
+# proteome: more shards means more jobs, not less work. The candidate stage
+# gets fewer because it sees roughly one protein in nine.
+n_shards: 50
+n_shards_candidates: 10
+
 life_stages:
   - copepodid
   - chalimus_I
@@ -50,6 +56,17 @@ life_stages:
 # verdict per protein to the audit log, so any drop is traceable to one rule.
 # ---------------------------------------------------------------------------
 cascade:
+  prefilter:
+    # The cascade runs in two phases. Length, low-complexity and exposure need
+    # only SignalP and DeepTMHMM, which run proteome-wide because exposure is
+    # built on them; epitope prediction and the salmon search then run on the
+    # survivors alone -- roughly one protein in nine.
+    #
+    # Setting this false sends the whole proteome to those predictors instead.
+    # That is the expensive way to run and the only way to measure what the
+    # exposure filter costs in false negatives, which the README calls the
+    # largest such source in the screen. Pair it with `cascade --profile`.
+    enabled: true
   length:
     min_aa: 50
     max_aa: 2000

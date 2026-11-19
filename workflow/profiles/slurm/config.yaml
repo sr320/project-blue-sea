@@ -46,16 +46,21 @@ set-resources:
   epitopes:
     mem_mb: 8000
     runtime: 120
+  # DIAMOND builds its index in memory; a shard that OOMs takes the whole
+  # array job element with it, so these two are deliberately generous.
   host_blast:
     mem_mb: 32000
     runtime: 240
   cross_species_blast:
     mem_mb: 32000
     runtime: 240
-  # DIAMOND builds its index in memory; a shard that OOMs takes the whole
-  # array job element with it, so this one is deliberately generous.
+  # Both are pure Python over the record set: a full proteome of records is
+  # well under 1 GB. Asking for 32 GB here only lengthened the queue wait.
+  prefilter:
+    mem_mb: 8000
+    runtime: 60
   assemble:
-    mem_mb: 32000
+    mem_mb: 8000
     runtime: 60
   cascade:
     mem_mb: 16000

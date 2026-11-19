@@ -39,7 +39,7 @@ config/weights.yaml     scoring weights (version-controlled on purpose)
 src/bluesea/
   records.py            the record carried through every stage
   io.py                 parsers for SignalP, DeepTMHMM, BLAST, epitopes
-  cascade.py            the filter cascade + per-protein audit
+  cascade.py            the two-phase filter cascade + per-protein audit
   orthology.py          reciprocal best hits, cross-species intersection
   scoring.py            the eight weighted criteria
   llm.py                cached, budgeted API client with dry-run
@@ -95,15 +95,30 @@ predictors only ever see survivors.
 | length | 50–2000 aa | small |
 | low_complexity | not repeat-dominated | small |
 | **exposure** | **is there any route to host antibody?** | **~8 in 9** |
+| — *prefilter ends here* — | | |
 | host_similarity | <40% identity to any salmon protein (hard) | moderate |
 | epitope | ≥2 predicted B-cell epitopes | moderate |
 | expression | expressed in ≥2 parasitic stages | small |
 | transmembrane | expressibility warning only, never excludes | none |
 
+The workflow runs the cascade in two halves, split at that line. The first
+three steps need only SignalP and DeepTMHMM, which have to see every protein
+because exposure is built on them. Epitope prediction and the salmon homology
+search are the costly pair, and both sit after exposure, so they run against
+the survivor FASTA the prefilter writes — about one protein in nine. The
+halves reconstruct the whole exactly: same verdicts, same order, same drop
+step, which is what `tests/test_cascade.py` pins.
+
+To measure what exposure costs in false negatives, set
+`cascade.prefilter.enabled: false` and run `cascade --profile`. That sends the
+whole proteome to the predictors, which is the expensive way to run and the
+only way to see what the filter rejected.
+
 The exposure filter does most of the work and is also the least certain:
 predicted secretion is not confirmed secretion. Every verdict is logged per
 protein to `logs/<species>/cascade_audit.jsonl`, so a dropped candidate traces
-to the exact rule that dropped it.
+to the exact rule that dropped it — including the proteins the prefilter
+dropped, which stay in the record set for exactly that reason.
 
 The cascade runs once per species; the two shortlists are then intersected.
 A protein conserved across two genera is a candidate for a vaccine serving

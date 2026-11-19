@@ -132,6 +132,7 @@ def run(workspace: Path, *args: str) -> int:
 
 
 def test_pipeline_runs_end_to_end(workspace: Path, capsys):
+    assert run(workspace, "prefilter", "--species", "lsal") == 0
     assert run(workspace, "assemble", "--species", "lsal") == 0
     assert run(workspace, "cascade", "--species", "lsal") == 0
     # Dry run: no API key, no network, no spend.
@@ -160,6 +161,7 @@ def test_pipeline_runs_end_to_end(workspace: Path, capsys):
 
 
 def test_cascade_audit_traces_every_drop(workspace: Path):
+    run(workspace, "prefilter", "--species", "lsal")
     run(workspace, "assemble", "--species", "lsal")
     run(workspace, "cascade", "--species", "lsal")
 
@@ -178,7 +180,63 @@ def test_cascade_audit_traces_every_drop(workspace: Path):
     assert "identity to salmon" in failing[0]["reason"]
 
 
+def test_prefilter_forwards_only_reachable_proteins(workspace: Path):
+    """The point of the split: the costly predictors never see a protein that
+    the cheap filters already excluded."""
+    assert run(workspace, "prefilter", "--species", "lsal") == 0
+
+    candidates = (workspace / "scratch" / "lsal" / "candidates.faa").read_text()
+    forwarded = {
+        line[1:].split()[0] for line in candidates.splitlines() if line.startswith(">")
+    }
+    assert "LSAL_RPL7" not in forwarded     # intracellular: no route to antibody
+    assert "LSAL_SHORT" not in forwarded    # below the length floor
+    assert "LSAL_P0" in forwarded
+    # Still judged on cross-reactivity, so it has to reach the salmon search.
+    assert "SSAL_ACTB" in forwarded
+    assert len(forwarded) < len(PROTEOME)
+
+    # Dropped proteins stay in the record set, or the audit would lose them.
+    records = json.loads(
+        (workspace / "scratch" / "lsal" / "prefiltered.json").read_text()
+    )
+    assert len(records) == len(PROTEOME)
+
+
+def test_disabling_the_prefilter_forwards_everything(workspace: Path):
+    """The escape hatch for measuring what the exposure filter costs: every
+    protein goes to the predictors, and the verdicts are unchanged."""
+    config_path = workspace / "config.yaml"
+    local = yaml.safe_load(config_path.read_text())
+    local["cascade"]["prefilter"]["enabled"] = False
+    config_path.write_text(yaml.safe_dump(local))
+
+    assert run(workspace, "prefilter", "--species", "lsal") == 0
+    candidates = (workspace / "scratch" / "lsal" / "candidates.faa").read_text()
+    forwarded = {
+        line[1:].split()[0] for line in candidates.splitlines() if line.startswith(">")
+    }
+    assert len(forwarded) == len(PROTEOME)
+
+    run(workspace, "assemble", "--species", "lsal")
+    run(workspace, "cascade", "--species", "lsal", "--profile")
+
+    audit = workspace / "logs" / "lsal" / "cascade_audit.jsonl"
+    entries = {
+        json.loads(line)["protein_id"]: json.loads(line)
+        for line in audit.read_text().splitlines()
+    }
+    # Drop attribution is unchanged: the first failing step still owns the drop.
+    assert entries["LSAL_RPL7"]["dropped_at"] == "exposure"
+    assert entries["SSAL_ACTB"]["dropped_at"] == "host_similarity"
+    # But now an exposure-dropped protein also carries the later verdicts,
+    # which is the whole point of running this way.
+    steps = [v["step"] for v in entries["LSAL_RPL7"]["verdicts"]]
+    assert "epitope" in steps and "expression" in steps
+
+
 def test_dry_run_reports_projected_spend_without_calling(workspace: Path, capsys):
+    run(workspace, "prefilter", "--species", "lsal")
     run(workspace, "assemble", "--species", "lsal")
     run(workspace, "cascade", "--species", "lsal")
     run(workspace, "literature", "--species", "lsal")
@@ -192,6 +250,7 @@ def test_dry_run_reports_projected_spend_without_calling(workspace: Path, capsys
 
 
 def test_benchmark_gate_reports_a_verdict(workspace: Path):
+    run(workspace, "prefilter", "--species", "lsal")
     run(workspace, "assemble", "--species", "lsal")
     run(workspace, "cascade", "--species", "lsal")
     exit_code = run(workspace, "benchmark")
