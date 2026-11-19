@@ -1,0 +1,18 @@
+# Local profile, for development and for the synthetic end-to-end run.
+#
+#   snakemake --profile workflow/profiles/local -n all
+#
+# No executor plugin, no container, no cluster. Everything runs here, which
+# makes this the right profile for checking that the DAG resolves before
+# spending an allocation on it.
+
+jobs: 4
+cores: 4
+resources:
+  network: 1
+printshellcmds: true
+rerun-incomplete: true
+
+# Fail on the first error rather than continuing: when iterating locally, a
+# second error is usually the first one again.
+keep-going: false

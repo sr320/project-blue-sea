@@ -1,0 +1,89 @@
+# Snakemake 8+ profile for Hyak (klone).
+#
+#   snakemake --profile workflow/profiles/slurm --use-apptainer all
+#
+# Requires snakemake-executor-plugin-slurm. Account and partition are the two
+# things to change for another cluster or allocation. Snakemake does not
+# expand shell or environment syntax in these values -- a "${VAR:-default}"
+# here reaches sbatch verbatim and the submission fails -- so they are plain
+# literals, overridden on the command line when needed:
+#
+#   snakemake --profile workflow/profiles/slurm \
+#     --default-resources slurm_account=otheracct slurm_partition=ckpt
+#
+# How the API stage stays off the compute nodes: the `literature` rule is
+# declared local in the Snakefile, so it runs on the host that invoked
+# snakemake -- a login node, which has outbound access -- rather than being
+# submitted to SLURM at all. The `network: 1` resource below is a separate
+# control: it caps how many such jobs run at once, so a rerun cannot open
+# dozens of concurrent API connections from a shared login node.
+
+executor: slurm
+jobs: 200
+local-cores: 4
+
+# Containerised so the environment is pinned and the run reproduces years on.
+software-deployment-method:
+  - apptainer
+apptainer-args: "--bind /gscratch:/gscratch"
+
+default-resources:
+  slurm_account: "srlab"
+  slurm_partition: "compute"
+  mem_mb: 8000
+  runtime: 120          # minutes
+  tmpdir: "/scr"        # node-local scratch; avoids hammering /gscratch
+
+# Per-rule overrides. The predictors are the expensive half of the run, so
+# they get the memory and wall time; everything else takes the defaults.
+set-resources:
+  signalp:
+    mem_mb: 16000
+    runtime: 120
+  deeptmhmm:
+    mem_mb: 16000
+    runtime: 180
+  epitopes:
+    mem_mb: 8000
+    runtime: 120
+  host_blast:
+    mem_mb: 32000
+    runtime: 240
+  cross_species_blast:
+    mem_mb: 32000
+    runtime: 240
+  # DIAMOND builds its index in memory; a shard that OOMs takes the whole
+  # array job element with it, so this one is deliberately generous.
+  assemble:
+    mem_mb: 32000
+    runtime: 60
+  cascade:
+    mem_mb: 16000
+    runtime: 60
+  benchmark:
+    mem_mb: 16000
+    runtime: 120
+
+set-threads:
+  signalp: 4
+  deeptmhmm: 4
+  epitopes: 2
+  host_blast: 8
+  cross_species_blast: 8
+
+# Only one API job at a time. See the note at the top of this file.
+resources:
+  network: 1
+
+# Retry transient cluster failures (preemption on ckpt, node faults), but not
+# many times: a rule that fails three times is failing for a reason, and
+# burning the allocation to rediscover that is worse than stopping.
+retries: 2
+max-jobs-per-second: 10
+max-status-checks-per-second: 1
+
+# Keep going past a failed shard so one bad protein does not cost the whole
+# sweep; the cascade summary will show the shortfall.
+keep-going: true
+rerun-incomplete: true
+printshellcmds: true

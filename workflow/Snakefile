@@ -30,6 +30,16 @@ SHARDS = [f"{i:03d}" for i in range(N_SHARDS)]
 
 CONTAINER = "containers/bluesea.sif"
 
+# `literature` is the one rule that needs outbound network. Declaring it local
+# keeps it off SLURM entirely: it runs on the host that invoked snakemake, a
+# login node with outbound access, while every other rule is submitted to
+# compute nodes that may have none. A resource constraint could not do this --
+# it caps concurrency, it does not place a job.
+localrules:
+    literature,
+    merge_shards,
+    orthology,
+
 
 rule all:
     input:
@@ -217,8 +227,9 @@ rule cross_species_blast:
 rule orthology:
     input:
         survivors=expand(f"{SCRATCH}/{{species}}/survivors.json", species=SPECIES),
-        forward=f"{SCRATCH}/{SPECIES[0]}_vs_{SPECIES[1]}.tsv",
-        reverse=f"{SCRATCH}/{SPECIES[1]}_vs_{SPECIES[0]}.tsv",
+        # Not `forward`/`reverse`: `reverse` is reserved by Snakemake.
+        a_vs_b=f"{SCRATCH}/{SPECIES[0]}_vs_{SPECIES[1]}.tsv",
+        b_vs_a=f"{SCRATCH}/{SPECIES[1]}_vs_{SPECIES[0]}.tsv",
     output:
         touch(f"{SCRATCH}/orthology.done"),
     container:
@@ -243,7 +254,9 @@ rule literature:
     output:
         f"{config['paths']['logs']}/llm_usage_{{species}}.json",
     resources:
-        network=1,          # see profiles/slurm: restricts to a networked node
+        # Caps concurrent API jobs at one; see localrules above for how this
+        # rule is kept off the compute nodes.
+        network=1,
     params:
         live=lambda wc: "--live" if os.environ.get("BLUESEA_LIVE") == "1" else "",
         blinded=lambda wc: "--blinded" if os.environ.get("BLUESEA_BLINDED") == "1" else "",
