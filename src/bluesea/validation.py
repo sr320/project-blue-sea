@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import random
 import statistics
+from collections.abc import Mapping
 from typing import Any
 
 from .records import ProteinRecord
@@ -41,59 +42,113 @@ def top_tier(ranked: list[ProteinRecord], fraction: float) -> list[ProteinRecord
     return ranked[:cutoff]
 
 
+def as_groups(controls: Any) -> dict[str, set[str]]:
+    """Normalise controls to {label: accessions}.
+
+    A control is a gene; the ranking holds proteins, and RefSeq carries one
+    entry per isoform. Scoring a control against a single accession means that
+    when a sibling isoform reaches the top tier instead, a correct result is
+    recorded as a miss. So a control may name every accession that represents
+    it, and a plain set of ids still works -- each id standing for itself.
+    """
+    if isinstance(controls, Mapping):
+        return {label: set(ids) for label, ids in controls.items()}
+    return {ident: {ident} for ident in controls}
+
+
 def positive_control_report(
     ranked: list[ProteinRecord],
-    control_ids: set[str],
+    controls: Any,
     fraction: float,
     minimum_recovered: float,
 ) -> dict[str, Any]:
-    """Where did the known-working antigens land?"""
+    """Where did the known-working antigens land?
+
+    A control counts as recovered when any accession representing it reaches
+    the top tier, and its reported position is the best its isoforms achieved.
+    """
+    groups = as_groups(controls)
     tier = {record.protein_id for record in top_tier(ranked, fraction)}
-    positions = {
-        record.protein_id: index
-        for index, record in enumerate(ranked, start=1)
-        if record.protein_id in control_ids
-    }
-    found = set(positions)
-    missing = control_ids - found
-    recovered = len(found & tier) / len(control_ids) if control_ids else 0.0
+    position_of = {record.protein_id: i for i, record in enumerate(ranked, start=1)}
+
+    positions: dict[str, int] = {}
+    matched: dict[str, str] = {}
+    in_tier: set[str] = set()
+    for label, accessions in groups.items():
+        ranked_here = {a: position_of[a] for a in accessions if a in position_of}
+        if ranked_here:
+            best = min(ranked_here, key=lambda a: ranked_here[a])
+            positions[label] = ranked_here[best]
+            matched[label] = best
+        if accessions & tier:
+            in_tier.add(label)
+
+    missing = set(groups) - set(positions)
+    recovered = len(in_tier) / len(groups) if groups else 0.0
 
     return {
-        "n_controls": len(control_ids),
-        "n_in_ranking": len(found),
-        "n_in_top_tier": len(found & tier),
+        "n_controls": len(groups),
+        "n_in_ranking": len(positions),
+        "n_in_top_tier": len(in_tier),
         "recovered_fraction": round(recovered, 3),
         "threshold": minimum_recovered,
         "passed": recovered >= minimum_recovered,
         "positions": dict(sorted(positions.items(), key=lambda kv: kv[1])),
+        # Which isoform actually carried the control, so a result that depends
+        # on a sibling accession is visible rather than implicit.
+        "matched_accession": {k: matched[k] for k in sorted(matched)},
         # Controls absent from the ranking were dropped by the cascade; that
         # is a louder failure than ranking them low, so they are listed apart.
         "dropped_by_cascade": sorted(missing),
     }
 
 
+def as_negative_groups(expected: Mapping[str, Any]) -> dict[str, tuple[str, set[str]]]:
+    """Normalise to {label: (expected_step, accessions)}.
+
+    A value that is a bare step keeps the old one-accession-per-control
+    meaning; a (step, accessions) pair names every accession representing the
+    control, as `as_groups` does for positives.
+    """
+    groups: dict[str, tuple[str, set[str]]] = {}
+    for label, value in expected.items():
+        if isinstance(value, str):
+            groups[label] = (value, {label})
+        else:
+            step, accessions = value
+            groups[label] = (step, set(accessions))
+    return groups
+
+
 def negative_control_report(
     records: list[ProteinRecord],
-    expected: dict[str, str],
+    expected: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Each negative control must be dropped, and by the right step.
 
     Being rejected for the wrong reason counts as a failure: a salmon protein
     that fails the exposure filter tells us nothing about whether the
     cross-reactivity filter works.
+
+    Where a control names several accessions, every one that appears in the
+    records must agree. Isoforms of one gene diverging on the step that
+    rejected them is itself worth seeing, so it fails rather than being
+    resolved by majority.
     """
+    by_id = {record.protein_id: record for record in records}
     rows = []
-    for record in records:
-        want = expected.get(record.protein_id)
-        if want is None:
+    for label, (want, accessions) in as_negative_groups(expected).items():
+        present = [by_id[a] for a in sorted(accessions) if a in by_id]
+        if not present:
             continue
-        got = record.dropped_at
+        got = sorted({record.dropped_at or "survived" for record in present})
         rows.append(
             {
-                "protein_id": record.protein_id,
+                "protein_id": label,
+                "n_accessions": len(present),
                 "expected_drop_step": want,
-                "actual_drop_step": got or "survived",
-                "passed": got == want,
+                "actual_drop_step": got[0] if len(got) == 1 else got,
+                "passed": got == [want],
             }
         )
     return {
@@ -222,8 +277,8 @@ def run_benchmark(
     records: list[ProteinRecord],
     weights_cfg: dict[str, Any],
     validation_cfg: dict[str, Any],
-    positive_ids: set[str],
-    negative_expected: dict[str, str],
+    positive_ids: Any,
+    negative_expected: Mapping[str, Any],
     random_ids: set[str],
 ) -> dict[str, Any]:
     """The full benchmark, with the gate verdict at the top level.

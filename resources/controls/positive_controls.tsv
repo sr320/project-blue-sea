@@ -12,12 +12,12 @@
 # identity_pct and coverage describe the alignment to mapped_from. Rows
 # commented out below could not be mapped; they are excluded rather than
 # guessed, so the gate measures only controls that actually resolve.
-protein_id	gene_symbol	mapped_from	identity_pct	coverage	rationale	reference
-XP_040578982.1	P0	C1BTD7	99.7	1.00	Ribosomal P0; chimeric TT-P0 and P0-my32 constructs reduced lice 88-91% at 2-3 months, decaying to 20% and ~4% by 11 months	PMC12133460
-XP_040572108.1	my32	D3PIL3	99.4	1.00	akirin/subolesin homolog; component of the P0-my32 chimera. Three isoforms align equally well (XP_071746275.1, XP_071746276.1, XP_071746277.1)	PMC12133460
-XP_040572709.1	prx2	C1BU78	100.0	1.00	Peroxiredoxin-2 peptide; tested as a sea lice antigen. Alignment distinguishes it from XP_040565186.1, which RefSeq also names "peroxiredoxin 2" but matches at only 65%	frontiersin 2025 review
-XP_040566588.1	hpx2	annotation	NA	NA	Salmon louse heme peroxidase 2; mapped by RefSeq annotation name, which is unique in this proteome. Isoform X2 is XP_040566589.1	doi:10.1016/j.fsi.2023
-XP_040566305.1	tlr6	annotation	NA	NA	TLR-6; tested in published sea lice vaccine work. Sole "toll-like receptor 6" in this proteome	frontiersin 2025 review
+protein_id	gene_symbol	isoforms	mapped_from	identity_pct	coverage	rationale	reference
+XP_040578982.1	P0		C1BTD7	99.7	1.00	Ribosomal P0; chimeric TT-P0 and P0-my32 constructs reduced lice 88-91% at 2-3 months, decaying to 20% and ~4% by 11 months	PMC12133460
+XP_040572108.1	my32	XP_071746275.1;XP_071746276.1;XP_071746277.1	D3PIL3	99.4	1.00	akirin/subolesin homolog; component of the P0-my32 chimera. Three isoforms align equally well (XP_071746275.1, XP_071746276.1, XP_071746277.1)	PMC12133460
+XP_040572709.1	prx2		C1BU78	100.0	1.00	Peroxiredoxin-2 peptide; tested as a sea lice antigen. Alignment distinguishes it from XP_040565186.1, which RefSeq also names "peroxiredoxin 2" but matches at only 65%	frontiersin 2025 review
+XP_040566588.1	hpx2	XP_040566589.1	annotation	NA	NA	Salmon louse heme peroxidase 2; mapped by RefSeq annotation name, which is unique in this proteome. Isoform X2 is XP_040566589.1	doi:10.1016/j.fsi.2023
+XP_040566305.1	tlr6		annotation	NA	NA	TLR-6; tested in published sea lice vaccine work. Sole "toll-like receptor 6" in this proteome	frontiersin 2025 review
 #
 # UNMAPPED -- do not uncomment without establishing the accession first.
 #

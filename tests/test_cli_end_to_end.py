@@ -15,7 +15,7 @@ import yaml
 
 from bluesea.cli import main
 
-from .conftest import random_sequence
+from .conftest import make_record, random_sequence
 
 # protein_id, signal peptide, n_TM, salmon identity, n epitopes, rnai, expressed
 PROTEOME = [
@@ -233,6 +233,34 @@ def test_disabling_the_prefilter_forwards_everything(workspace: Path):
     # which is the whole point of running this way.
     steps = [v["step"] for v in entries["LSAL_RPL7"]["verdicts"]]
     assert "epitope" in steps and "expression" in steps
+
+
+def test_random_controls_never_include_a_control_isoform(config):
+    """Drawing a control's own sibling as a 'random' protein would put a
+    known antigen in the set that is supposed to represent the background."""
+    from bluesea.cli import _sample_random_controls
+
+    records = [make_record(f"P{i:03d}", seed=i) for i in range(40)]
+    positives = {"CTRL_A": {"P000", "P001"}}
+    negatives = {"CTRL_B": ("exposure", {"P002"})}
+    drawn = _sample_random_controls(
+        records,
+        {**config["validation"], "random_control_n": 30},
+        positives,
+        negatives,
+    )
+    assert drawn
+    assert not drawn & {"P000", "P001", "P002"}
+
+
+def test_isoforms_column_is_optional(config):
+    from bluesea.cli import _control_accessions
+
+    assert _control_accessions({"protein_id": "XP_1"}) == {"XP_1"}
+    assert _control_accessions({"protein_id": "XP_1", "isoforms": ""}) == {"XP_1"}
+    assert _control_accessions(
+        {"protein_id": "XP_1", "isoforms": "XP_2; XP_3"}
+    ) == {"XP_1", "XP_2", "XP_3"}
 
 
 def test_a_broken_gene_join_is_loud(capsys):
