@@ -84,6 +84,62 @@ def test_negative_controls_must_fail_at_the_right_step(config):
     assert not wrong["passed"]
 
 
+def test_a_sibling_isoform_in_the_top_tier_counts_as_recovery(weights):
+    """The control is a gene; the ranking holds proteins. RefSeq carries one
+    entry per isoform, so scoring against a single accession records a correct
+    result as a miss whenever a sibling is what ranked."""
+    records = build_population()
+    # The canonical accession is nowhere in the ranking; its isoform is first.
+    ranked = rank(records, weights)
+    report = positive_control_report(
+        ranked,
+        {"P0_GENE": {"P0_CANONICAL", "POS_0"}},
+        fraction=0.3,
+        minimum_recovered=0.6,
+    )
+    assert report["n_controls"] == 1
+    assert report["passed"]
+    assert report["dropped_by_cascade"] == []
+    # And it says which isoform carried it, so the dependency is visible.
+    assert report["matched_accession"]["P0_GENE"] == "POS_0"
+
+
+def test_a_control_is_missing_only_when_every_isoform_is(weights):
+    ranked = rank(build_population(), weights)
+    report = positive_control_report(
+        ranked,
+        {"GHOST": {"NOT_HERE", "ALSO_NOT_HERE"}},
+        fraction=0.3,
+        minimum_recovered=0.6,
+    )
+    assert report["dropped_by_cascade"] == ["GHOST"]
+    assert report["n_in_ranking"] == 0
+
+
+def test_isoforms_disagreeing_on_the_drop_step_is_a_failure(config):
+    """Identical paralogs rejected by different rules is worth seeing, not
+    worth resolving by majority."""
+    agree_a = make_record("H3_A", signal_peptide=False, seed=11)
+    agree_b = make_record("H3_B", signal_peptide=False, seed=12)
+    for record in (agree_a, agree_b):
+        run_cascade(record, config["cascade"])
+    report = negative_control_report(
+        [agree_a, agree_b], {"H3": ("exposure", {"H3_A", "H3_B"})}
+    )
+    assert report["passed"]
+    assert report["details"][0]["n_accessions"] == 2
+
+    # One sibling dropped by length instead: the control no longer tests what
+    # it was chosen to test.
+    odd = make_record("H3_C", length=30, seed=13)
+    run_cascade(odd, config["cascade"])
+    split = negative_control_report(
+        [agree_a, odd], {"H3": ("exposure", {"H3_A", "H3_C"})}
+    )
+    assert not split["passed"]
+    assert split["details"][0]["actual_drop_step"] == ["exposure", "length"]
+
+
 def test_random_controls_land_mid_pack(weights):
     records = build_population()
     ranked = rank(records, weights)

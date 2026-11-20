@@ -6,11 +6,11 @@
 # established by aligning a UniProt reference against that proteome. RefSeq
 # names L7 "large ribosomal subunit protein uL30", so annotation text does not
 # find it. Reproduce with scripts/map_controls.py.
-protein_id	class	expected_drop_step	mapped_from	identity_pct	coverage	rationale
-XP_040576346.1	housekeeping	exposure	C1BTB6	100.0	1.00	Louse cytoplasmic ribosomal protein L7; no secretion signal
-XP_040583615.1	housekeeping	exposure	A7TZ68	89.1	1.00	Louse elongation factor 1-alpha; cytoplasmic
-XP_040571908.1	housekeeping	exposure	C1BSB6	97.8	1.00	Louse histone H3.3A; nuclear, no route to host antibody. Identical paralogs at XP_040571912.1 and XP_040575571.1
-XP_040579451.1	housekeeping	exposure	C1BVW5	100.0	1.00	Louse 20S proteasome subunit beta type-1; cytoplasmic
+protein_id	class	expected_drop_step	isoforms	mapped_from	identity_pct	coverage	rationale
+XP_040576346.1	housekeeping	exposure		C1BTB6	100.0	1.00	Louse cytoplasmic ribosomal protein L7; no secretion signal
+XP_040583615.1	housekeeping	exposure		A7TZ68	89.1	1.00	Louse elongation factor 1-alpha; cytoplasmic
+XP_040571908.1	housekeeping	exposure	XP_040571912.1;XP_040575571.1	C1BSB6	97.8	1.00	Louse histone H3.3A; nuclear, no route to host antibody. Identical paralogs at XP_040571912.1 and XP_040575571.1
+XP_040579451.1	housekeeping	exposure		C1BVW5	100.0	1.00	Louse 20S proteasome subunit beta type-1; cytoplasmic
 #
 # HOST SPIKES -- disabled, because the benchmark cannot see them.
 #

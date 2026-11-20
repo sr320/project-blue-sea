@@ -459,10 +459,11 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
             records.extend(_load_records(path))
 
     positives = {
-        row["protein_id"] for row in io.read_tsv(validation_cfg["positive_controls"])
+        row["protein_id"]: _control_accessions(row)
+        for row in io.read_tsv(validation_cfg["positive_controls"])
     }
     negatives = {
-        row["protein_id"]: row["expected_drop_step"]
+        row["protein_id"]: (row["expected_drop_step"], _control_accessions(row))
         for row in io.read_tsv(validation_cfg["negative_controls"])
     }
     random_ids = _sample_random_controls(records, validation_cfg, positives, negatives)
@@ -488,21 +489,39 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
     return 0
 
 
+def _control_accessions(row: dict[str, str]) -> set[str]:
+    """Every accession representing one control.
+
+    A control is a gene, but the proteome carries one entry per isoform. The
+    optional `isoforms` column lists the siblings, semicolon separated, so a
+    control is not scored as missing when a sibling is what ranked.
+    """
+    accessions = {row["protein_id"]}
+    extra = row.get("isoforms") or ""
+    return accessions | {part.strip() for part in extra.split(";") if part.strip()}
+
+
 def _sample_random_controls(
     records: list[ProteinRecord],
     validation_cfg: dict[str, Any],
-    positives: set[str],
-    negatives: dict[str, str],
+    positives: dict[str, set[str]],
+    negatives: dict[str, tuple[str, set[str]]],
 ) -> set[str]:
     import random
+
+    # Every accession of every control, not just the canonical one: drawing a
+    # control's own isoform as a "random" protein would corrupt the random set.
+    reserved: set[str] = set()
+    for accessions in positives.values():
+        reserved |= accessions
+    for _, accessions in negatives.values():
+        reserved |= accessions
 
     rng = random.Random(validation_cfg["random_seed"])
     pool = [
         record.protein_id
         for record in records
-        if record.survived
-        and record.protein_id not in positives
-        and record.protein_id not in negatives
+        if record.survived and record.protein_id not in reserved
     ]
     n = min(validation_cfg["random_control_n"], len(pool))
     return set(rng.sample(pool, n)) if n else set()

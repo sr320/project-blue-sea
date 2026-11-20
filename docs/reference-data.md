@@ -121,6 +121,16 @@ and only alignment says which is the published antigen. The script fetches a
 UniProt reference per control, aligns it, and prints identity and coverage so
 every assignment can be re-checked.
 
+A control is a **gene**, but the ranking holds proteins and RefSeq carries one
+entry per isoform. The `isoforms` column lists the siblings that represent the
+same control, semicolon separated, and the benchmark counts a control
+recovered when any of them reaches the top tier — reporting which one did, in
+`matched_accession`. Without that, a correct result is recorded as a miss
+whenever a sibling is what ranked, and with only five active positives one
+false miss moves the gate. Negative controls are held to the opposite
+standard: every isoform present must drop at the same expected step, because
+paralogs rejected by different rules is itself worth seeing.
+
 Five of eight positives and all four louse negatives resolved at ≥89% identity
 over full-length coverage. Three positives did not and are commented out
 rather than guessed, so the gate measures only what actually resolves:
