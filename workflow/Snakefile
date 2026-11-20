@@ -79,6 +79,7 @@ wildcard_constraints:
 localrules:
     literature,
     download_proteome,
+    download_gff,
     merge_topology,
     merge_candidate_predictions,
 
@@ -108,6 +109,9 @@ rule provision:
     input:
         expand(f"{REFERENCE}/{{genome}}/proteins.faa", genome=GENOMES),
         expand(f"{REFERENCE}/{{genome}}/{{genome}}.dmnd", genome=GENOMES),
+        # Annotations only for the louse species: the host proteome is a
+        # search target, never a record set, so it needs no gene map.
+        expand(f"{REFERENCE}/{{species}}/annotation.gff3", species=SPECIES),
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +130,26 @@ rule download_proteome:
         f"{REFERENCE}/{{genome}}/proteins.faa",
     params:
         url=lambda wc: f"{ncbi_prefix(wc.genome)}_protein.faa.gz",
+    retries: 3
+    shell:
+        """
+        curl -fsSL --retry 3 --retry-delay 5 -o {output}.gz {params.url}
+        gunzip -c {output}.gz > {output}
+        rm -f {output}.gz
+        """
+
+
+rule download_gff:
+    """The annotation, for its protein-to-gene map and nothing else.
+
+    NCBI protein FASTA headers carry no gene tag, so without this every
+    protein is its own gene and the expression and RNAi tables -- the only
+    evidence the essentiality axis has -- join to nothing.
+    """
+    output:
+        f"{REFERENCE}/{{genome}}/annotation.gff3",
+    params:
+        url=lambda wc: f"{ncbi_prefix(wc.genome)}_genomic.gff.gz",
     retries: 3
     shell:
         """
@@ -257,6 +281,9 @@ rule prefilter:
         tmhmm=f"{SCRATCH}/{{species}}/deeptmhmm.gff3",
         proteome=lambda wc: os.path.join(
             REFERENCE, config["species"][wc.species]["proteome"]
+        ),
+        gff=lambda wc: os.path.join(
+            REFERENCE, config["species"][wc.species]["gff"]
         ),
     output:
         records=f"{SCRATCH}/{{species}}/prefiltered.json",

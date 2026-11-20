@@ -65,7 +65,35 @@ files are handled: expression and RNAi evidence that is missing scores as
 unknown and raises a flag, never as zero. `crog` has `rnai: null` because no
 RNAi resource has been published for it.
 
-### The gene-ID join is broken as it stands
+### The gene-ID join, and how it is resolved
+
+`provision` now fetches each louse annotation to
+`resources/reference/<species>/annotation.gff3`, and `prefilter` builds the
+protein-to-gene map from it. Both annotations map at 100% of their proteome,
+though they say it differently, and a parser written against either alone
+returns nothing for the other:
+
+```
+RefSeq   protein_id=XP_040583074.1  gene=LOC121131766  Dbxref=GeneID:121131766
+GenBank  protein_id=QQP55611.1      locus_tag=FKW44_000001
+```
+
+So `gene_id` prefers the stable `GeneID:`, falls back to the locus tag, then
+the gene name. lsal resolves to 13,322 protein-coding genes across 23,600
+proteins (1.77 isoforms per gene); crog to 19,128 genes across 19,128
+proteins, its GenBank annotation carrying no alternative splicing.
+
+Which key the expression and RNAi tables use is still unknown — they come
+from LiceBase and the literature, not from the assembly — so `assemble` tries
+`gene_id`, the bare `GeneID` number, the gene symbol and finally the protein
+accession, and **reports which one matched**. A table joining only on
+`protein_id` is keyed per isoform rather than per gene and will miss siblings,
+which the report makes visible rather than leaving to be inferred.
+
+Without a GFF the old behaviour remains, loudly: `prefilter` warns, gene ids
+fall back to protein accessions, and `assemble` reports a zero join rate.
+
+### Why it was broken
 
 `cmd_assemble` joins RNAi and expression on `gene_id`, which `_gene_of` takes
 from a `[gene=...]` tag in the FASTA header. **NCBI `protein.faa` files do not
@@ -82,21 +110,22 @@ gene ids, locus tags, `LOC` numbers — nothing joins. Every protein then scores
 `untested` on essentiality, which carries the heaviest weight in the rubric,
 and the run completes looking healthy.
 
-`assemble` now prints a join rate per table and warns loudly at zero, so this
-cannot pass unnoticed. Resolving it is a choice about where gene identity
-comes from:
+Resolving it was a choice about where gene identity comes from; the GFF route
+was taken, for being authoritative and for handling isoforms:
 
 | Option | Gets you | Costs |
 | --- | --- | --- |
 | Key the expression and RNAi tables on protein accessions | no code change | remapping whatever LiceBase gives you |
 | Parse the locus tag out of the description (`FKW44_024911`) | works for `crog` | RefSeq `lsal` descriptions have no locus tag |
 | Fetch `translated_cds.faa` instead | real `[gene=...]` and `[db_xref=GeneID:...]` tags | ids are `lcl\|NC_052131.2_prot_XP_040583074.1_1`, needing their own parser |
-| Build a protein→gene map from the GFF | authoritative, handles isoforms | another download and a parser |
+| **Build a protein→gene map from the GFF** | **authoritative, handles isoforms** | **another download and a parser — taken** |
 
-The GFF route also settles a second problem these files raise: RefSeq
-`protein.faa` holds one entry per **isoform**, so several near-identical
-proteins of one gene are scored independently and can crowd the top tier.
-`kuz` above appears as both `XP_040583096.1` and `XP_040583086.1`.
+It also settles a second problem these files raise: RefSeq `protein.faa`
+holds one entry per **isoform**, so several near-identical proteins of one
+gene are scored independently and can crowd the top tier. `kuz` above appears
+as both `XP_040583096.1` and `XP_040583086.1`. They now share a `gene_id`,
+which is also an independent check on the control sets — the four akirin
+isoforms grouped there by alignment do all resolve to `GeneID:121121278`.
 
 ## Not implemented
 

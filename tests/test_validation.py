@@ -259,3 +259,78 @@ def test_full_signature_opens_the_gate(config):
     report = gate(mags, symbiont_cfg(config))
     assert report["proceed"]
     assert report["qualifying"][0]["both_louse_species"]
+
+
+# -- gene identity ---------------------------------------------------------
+
+
+REFSEQ_GFF = """\
+##gff-version 3
+NC_1\tGnomon\tCDS\t1\t99\t.\t+\t0\tID=cds-XP_1.1;Dbxref=GeneID:555,GenBank:XP_1.1;gene=kuz;product=x;protein_id=XP_1.1
+NC_1\tGnomon\tCDS\t200\t299\t.\t+\t0\tID=cds-XP_1.1;Dbxref=GeneID:555,GenBank:XP_1.1;gene=kuz;product=x;protein_id=XP_1.1
+NC_1\tGnomon\tCDS\t1\t99\t.\t+\t0\tID=cds-XP_2.1;Dbxref=GeneID:555,GenBank:XP_2.1;gene=kuz;product=x;protein_id=XP_2.1
+NC_1\tGnomon\tgene\t1\t99\t.\t+\t.\tID=gene-kuz;gene=kuz
+"""
+
+GENBANK_GFF = """\
+##gff-version 3
+CM_1\tGenbank\tCDS\t1\t99\t.\t+\t0\tID=cds-QQP1.1;Dbxref=NCBI_GP:QQP1.1;locus_tag=FKW44_000001;protein_id=QQP1.1
+"""
+
+
+def test_gene_map_reads_both_annotation_dialects(tmp_path):
+    """RefSeq says gene= and GeneID:; GenBank says locus_tag and neither. A
+    parser written against one returns nothing at all for the other."""
+    refseq = tmp_path / "refseq.gff3"
+    refseq.write_text(REFSEQ_GFF)
+    genbank = tmp_path / "genbank.gff3"
+    genbank.write_text(GENBANK_GFF)
+
+    from bluesea.io import read_protein_gene_map
+
+    rs = read_protein_gene_map(refseq)
+    assert rs["XP_1.1"] == ("GeneID:555", "kuz")
+    # CDS features repeat per exon; the protein is recorded once.
+    assert len(rs) == 2
+    # Two isoforms of one gene share a gene id, which is the whole point.
+    assert rs["XP_1.1"][0] == rs["XP_2.1"][0]
+
+    gb = read_protein_gene_map(genbank)
+    assert gb["QQP1.1"] == ("FKW44_000001", "FKW44_000001")
+
+
+def test_gene_keys_are_ordered_and_deduplicated():
+    from bluesea.cli import _gene_keys
+
+    record = make_record("XP_9.1")
+    record.gene_id = "GeneID:555"
+    record.gene_symbol = "kuz"
+    assert _gene_keys(record) == [
+        ("gene_id", "GeneID:555"),
+        ("geneid_number", "555"),
+        ("gene_symbol", "kuz"),
+        ("protein_id", "XP_9.1"),
+    ]
+
+    # When the gene id already is the protein id -- no annotation available --
+    # the same key is not tried twice.
+    bare = make_record("XP_9.1")
+    bare.gene_id = "XP_9.1"
+    bare.gene_symbol = ""
+    assert _gene_keys(bare) == [("gene_id", "XP_9.1")]
+
+
+def test_lookup_reports_which_key_matched():
+    from bluesea.cli import _lookup_by_gene
+
+    record = make_record("XP_9.1")
+    record.gene_id = "GeneID:555"
+    record.gene_symbol = "kuz"
+
+    assert _lookup_by_gene({"GeneID:555": "a"}, record) == ("a", "gene_id")
+    assert _lookup_by_gene({"555": "b"}, record) == ("b", "geneid_number")
+    assert _lookup_by_gene({"kuz": "c"}, record) == ("c", "gene_symbol")
+    assert _lookup_by_gene({"XP_9.1": "d"}, record) == ("d", "protein_id")
+    assert _lookup_by_gene({"nope": "e"}, record) == (None, "")
+    # Most specific wins when several could match.
+    assert _lookup_by_gene({"GeneID:555": "a", "kuz": "c"}, record)[1] == "gene_id"

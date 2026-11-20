@@ -185,6 +185,60 @@ def read_epitopes(path: str | Path) -> dict[str, list[Epitope]]:
     return out
 
 
+def read_protein_gene_map(path: str | Path) -> dict[str, tuple[str, str]]:
+    """protein accession -> (gene_id, gene_symbol), from a genome GFF.
+
+    This is the only authoritative link between the two. NCBI `protein.faa`
+    headers carry no gene tag at all, so without the GFF every protein looks
+    like its own gene and nothing keyed on genes can join to it.
+
+    The two annotations here do not agree on how to say it, and a parser
+    written against one silently returns nothing for the other:
+
+        RefSeq   protein_id=XP_040583074.1 gene=LOC121131766
+                 Dbxref=GeneID:121131766
+        GenBank  protein_id=QQP55611.1     locus_tag=FKW44_000001
+
+    So gene_id prefers the stable numeric GeneID, falls back to the locus tag,
+    then to the gene name; the symbol prefers the readable name. CDS features
+    repeat per exon, and the first mention of a protein wins.
+    """
+    out: dict[str, tuple[str, str]] = {}
+    for row in _iter_rows(path):
+        if len(row) < 9 or row[2] != "CDS":
+            continue
+        attributes = _gff_attributes(row[8])
+        protein_id = attributes.get("protein_id")
+        if not protein_id or protein_id in out:
+            continue
+        gene_id = (
+            _gene_dbxref(attributes.get("Dbxref", ""))
+            or attributes.get("locus_tag")
+            or attributes.get("gene")
+            or ""
+        )
+        symbol = attributes.get("gene") or attributes.get("locus_tag") or ""
+        if gene_id:
+            out[protein_id] = (gene_id, symbol)
+    return out
+
+
+def _gff_attributes(field: str) -> dict[str, str]:
+    attributes = {}
+    for item in field.split(";"):
+        key, _, value = item.partition("=")
+        if value:
+            attributes[key.strip()] = value.strip()
+    return attributes
+
+
+def _gene_dbxref(dbxref: str) -> str:
+    for item in dbxref.split(","):
+        if item.startswith("GeneID:"):
+            return item
+    return ""
+
+
 def read_expression(path: str | Path, stages: list[str]) -> dict[str, dict[str, float]]:
     """Gene-by-stage TPM matrix. Columns absent from the file are left out of
     the per-gene dict rather than zero-filled, so "not assayed" stays visible."""
