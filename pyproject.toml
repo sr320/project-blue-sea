@@ -12,6 +12,9 @@ dependencies = ["pyyaml>=6.0"]
 [project.optional-dependencies]
 api = ["anthropic>=0.40"]
 dev = ["pytest>=8.0", "ruff>=0.5"]
+# scripts/map_controls.py only. Curation runs on a laptop, so it aligns in
+# Python rather than requiring the container's DIAMOND.
+curation = ["biopython>=1.83"]
 
 [project.scripts]
 bluesea = "bluesea.cli:main"

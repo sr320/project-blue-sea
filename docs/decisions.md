@@ -17,10 +17,21 @@ Two of these change the build; the rest change the deliverable or the budget.
 - [ ] **Who runs wet-lab validation, and is there a collaborator for challenge
       trials?** Steps 1–3 of the bench sequence are plausibly in-house; step 4
       is not.
-- [ ] **Map the control sets to real accessions.** `resources/controls/*.tsv`
-      hold symbolic ids that match nothing in any proteome, so the gate fails
-      by construction. This blocks the first real run and cannot be done until
-      `provision` has put the proteomes on disk.
+- [x] **Control sets mapped by alignment.** Five of eight positives and all
+      four louse negatives now carry `GCF_016086655.4` accessions, established
+      with `scripts/map_controls.py` and recorded with identity and coverage.
+      Review the assignments before the first gated run.
+- [ ] **Three positive controls remain unmapped**, and each needs a judgment
+      rather than a search: whether *L. salmonis* has a Bm86 ortholog at all
+      (the best hit is 28.8% to an unrelated EGF-repeat protein), what the
+      source paper's `hpx1` corresponds to when only `hpx2` exists, and which
+      of 84 transporters the `kcc-transporter` antigen is. They are commented
+      out meanwhile, so the gate is scored over five.
+- [ ] **Host-spike negative controls need a spike-in mechanism.** Salmon
+      accessions can never match a record, because the benchmark reads only
+      `config["species"]`. Until the named salmon proteins are appended to the
+      louse proteome for benchmark runs, the cross-reactivity filter is
+      unverified by the negative controls.
 - [ ] **Total API budget ceiling for the first full run.** Currently
       `config.yaml:llm.budget_usd` sums to $400 with the symbiont arm capped
       at $60 (15%). These are planning placeholders, not a quote.
