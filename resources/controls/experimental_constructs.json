@@ -125,10 +125,19 @@
               "restriction_site": "BamHI (per Methods 2.2)"
             }
           ],
+          "derived_fragment": {
+            "sequence": "EYLADPSKFASVAAAPAAGATKAAAAAPAKADEPE",
+            "length_aa": 35,
+            "derivation": "NOT PRINTED IN EITHER PAPER. Translated from the BT077866 CDS and sliced at residues 267-301, 1-based inclusive. The stated range yields exactly 35 aa, as both papers claim.",
+            "annotation_match": "Exact substring of XP_040578982.1 at residues 267-301, the same coordinates. The clone translation and the RefSeq protein are both 314 aa and differ at exactly one residue, 263 (clone E, RefSeq Q), which lies outside the fragment, so the vaccine peptide is identical in both.",
+            "primer_confirmation": "Both cloning primers independently confirm the boundaries. Primer E read from the ATG inside its NcoI site translates to MEYLADP, matching the fragment start with an added initiator Met. Primer F reverse-complemented and read in frame 2 translates to KADEPE, matching the fragment end.",
+            "derived_on": "2026-11-20",
+            "caveat": "This locates the fragment in the configured annotation. It is not the administered construct sequence, which still lacks its linkers and tag."
+          },
           "mapped_accessions": [
             "XP_040578982.1"
           ],
-          "mapping_status": "fragment_mapping_pending"
+          "mapping_status": "verified"
         },
         {
           "name": "my32",
@@ -149,13 +158,20 @@
               "restriction_site": "HindIII (per Methods 2.2)"
             }
           ],
+          "derived_insert": {
+            "boundaries": "ADD38399.1 residues 2-178, 177 aa of 180",
+            "derivation": "NOT PRINTED IN THE PAPER. Primer G after its BamHI site translates to ACVTLKR, which is ADD38399.1 residues 2-8; primer H reverse-complemented translates to DSQTPSY, which is residues 172-178. The insert therefore omits the initiator Met and the final two residues, LS.",
+            "annotation_difference": "ADD38399.1 (Akirin-2, 2010) and all four mapped RefSeq accessions are 180 aa and differ at exactly one residue, 132 (ADD38399 Y, RefSeq C), which lies inside the 2-178 insert. The four RefSeq entries are identical to one another, which is why all four are listed. 99.4% identity.",
+            "derived_on": "2026-11-20"
+          },
           "mapped_accessions": [
             "XP_040572108.1",
             "XP_071746275.1",
             "XP_071746276.1",
             "XP_071746277.1"
           ],
-          "mapping_status": "construct_mapping_pending"
+          "mapping_status": "construct_mapping_pending",
+          "mapping_status_reason": "The insert boundaries are now derived and the annotation match is 99.4%, but the paper still does not state the P0-to-my32 junction or any linker, and the single Y132C difference from the administered 2010 sequence is unexplained. Both need settling before this is verified."
         }
       ],
       "formulation": "100 micrograms per fish; Montanide ISA50 V2; homologous prime-boost in freshwater",
@@ -229,9 +245,9 @@
         "No deposited construct sequence accession is given."
       ],
       "curation_next_steps": [
-        "Retrieve BT077866 and align the P0 region 267-301 to XP_040578982.1 to fix the fragment coordinates in the configured annotation. Primers E and F give the nucleotide boundaries of the amplified insert and can verify the region independently of the stated residue numbers.",
-        "Retrieve ADD38399 and locate the amplicon bounded by primers G and H to fix the my32 fragment.",
-        "Obtain reference 15 (doi 10.1016/j.exppara.2013.06.018) and check whether it prints the my32-Ls sequence.",
+        "DONE 2026-11-20: the P0 fragment was derived from BT077866, matched exactly to XP_040578982.1 at 267-301, and confirmed independently by primers E and F. See derived_fragment.",
+        "DONE 2026-11-20: the my32 insert was placed at ADD38399.1 residues 2-178 from primers G and H. See derived_insert. The P0-to-my32 junction and the Y132C annotation difference remain open.",
+        "Obtain reference 15 (doi 10.1016/j.exppara.2013.06.018) and check whether it prints the my32-Ls sequence and explains the Y132C difference.",
         "Download the supplementary material directly and check for a sequence-bearing file.",
         "If no printed sequence exists anywhere, request the administered sequence from the corresponding authors (oystein.evensen@nmbu.no, mario.pablo@cigb.edu.cu, yamila.carpio@cigb.edu.cu) before marking verified."
       ],
@@ -310,10 +326,19 @@
           "source_region": "aa 267-301 (35 aa peptide)",
           "source_quote": "A 35 aa peptide between the amino acids 267 to 301 from L. salmonis P0 sequence was amplified from pMOS-Blue-P0",
           "provenance": "Leal et al. 2019 Section 2.1. This resolves the range the 2025 paper left unstated, and confirms it is the same 267-301 fragment used in P0-my32. The earlier registry entry recorded this only as an unverified inference.",
+          "derived_fragment": {
+            "sequence": "EYLADPSKFASVAAAPAAGATKAAAAAPAKADEPE",
+            "length_aa": 35,
+            "derivation": "NOT PRINTED IN EITHER PAPER. Translated from the BT077866 CDS and sliced at residues 267-301, 1-based inclusive. Identical to the P0-my32 fragment, as expected from the shared pMOS-Blue-P0 template.",
+            "annotation_match": "Exact substring of XP_040578982.1 at residues 267-301, the same coordinates. The one clone-versus-RefSeq difference, residue 263, lies outside the fragment.",
+            "primer_confirmation": "NOT available for this construct. Leal et al.'s own primers C and D are in a Table 1 absent from the deposited manuscript. The boundaries were confirmed instead with primers E and F of the 2025 paper, which amplify the same 267-301 range from the same template for P0-my32.",
+            "derived_on": "2026-11-20",
+            "caveat": "This locates the fragment in the configured annotation. It is not the administered construct sequence, which still lacks its linkers and tag."
+          },
           "mapped_accessions": [
             "XP_040578982.1"
           ],
-          "mapping_status": "fragment_mapping_pending"
+          "mapping_status": "verified"
         }
       ],
       "formulation": "100 micrograms per fish; Montanide ISA50 V2; homologous prime-boost in freshwater",
@@ -412,7 +437,7 @@
         "RESOLVED since the last revision: the epitope identities and sequences, the fusion orientation, the P0 residue range, the vector and the host strain. The earlier description named only tetanus toxin and left the P0 range unstated."
       ],
       "curation_next_steps": [
-        "Retrieve BT077866, translate it, and take residues 267-301 to obtain the P0 peptide. Record it as derived rather than as printed, and check it against XP_040578982.1 to fix the fragment coordinates in the configured annotation.",
+        "DONE 2026-11-20: the P0 peptide was derived from BT077866 and matched exactly to XP_040578982.1 at 267-301. See derived_fragment.",
         "Obtain the published version of record of Leal et al. 2019 for Table 1 and the restriction-site assignment, which the submitted manuscript reports inconsistently.",
         "Assemble a candidate TT-P0 sequence from QYIKANSKFIGITEL + LSEIKGVIVHRLEGV + P0(267-301) plus the pET28a His tag and linkers, and test it against the 8.3 kDa expected mass. Treat any such assembly as a hypothesis for author confirmation, not as the administered sequence.",
         "Ask the corresponding authors for the deposited pET28a-TT-P0 sequence, which would settle the linkers and tag in one step."

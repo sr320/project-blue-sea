@@ -10,9 +10,15 @@
       states, and the P0 35-mer itself. Only the submitted manuscript was
       readable; its restriction-site assignment is internally inconsistent,
       so the published version is still worth obtaining.
-- [ ] Map the P0-my32 fragments. The P0 peptide is aa 267-301 of BT077866 and
-      the cloning primers for both fragments are recorded, so the coordinates
-      can be fixed by alignment without waiting on correspondence.
+- [x] Map the fragments to the configured annotation. The P0 peptide derived
+      from BT077866 matches XP_040578982.1 exactly at 267-301, with the single
+      clone-versus-RefSeq difference falling outside it, and both cloning
+      primers confirm the boundaries independently. Both P0 components are
+      now `verified`.
+- [ ] Settle two things my32 still lacks: the P0-to-my32 junction, which no
+      paper states, and a single residue difference at position 132 between
+      the administered ADD38399 sequence and all four mapped RefSeq entries
+      (99.4% identity). Its mapping stays pending until both are explained.
 - [ ] Resolve two timing conflicts in the 2025 study, both recorded unresolved:
       the "2, 5, 11 months" labels match no challenge date under either the
       prime or the boost anchor, and Figure 5's 32 dpc contradicts the week

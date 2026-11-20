@@ -15,8 +15,17 @@ and regions, reference mappings, formulation, comparator-specific endpoints,
 timing, sequence file/checksum and curation status.
 
 The current entries describe TT-P0 and P0-my32 from one primary study.
-They are diagnostic and pending exact sequence/fragment mapping. Both share
-P0 and the study; they are not independent positive protein controls.
+They are diagnostic and pending the exact administered sequence. Both share
+the study and the identical P0 fragment, from one template, so they are not
+independent positive protein controls.
+
+Fragment mapping is partly settled. A component carries a `derived_fragment`
+or `derived_insert` block when its sequence was reconstructed here rather
+than read from a paper: what it was derived from, how it matches the
+configured annotation, and what independently confirms it. A component
+reaches `verified` only on an exact annotation match whose boundaries hold
+up against the cloning primers. Deriving a component never advances a
+construct's own `curation_status`, which tracks the administered sequence.
 
 That study prints no construct sequence: only PCR primers, and MS/MS identity
 confirmations rather than sequences. So both records stay `sequence_pending`
