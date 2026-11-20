@@ -28,7 +28,7 @@ Three things follow, and the rubric encodes them:
 2. **Antibody titer does not predict protection in salmon.** Functional
    essentiality has to be an independent axis.
 3. **The search has been narrow.** Most tested antigens were picked because
-   they were already characterised in ticks. The 14,014-gene proteome has
+   they were already characterised in ticks. The 19,574-gene proteome has
    never been screened end to end against explicit criteria.
 
 ## Layout
@@ -67,6 +67,15 @@ bash scripts/hyak_preflight.sh --account srlab --partition compute
 ```
 
 See [docs/hyak.md](docs/hyak.md) for what each check means.
+
+Then build the container and fetch the reference data. The expression
+matrices and the RNAi table are not on NCBI and have to be supplied by hand —
+[docs/reference-data.md](docs/reference-data.md) lists what goes where:
+
+```bash
+bash scripts/build_container.sh
+snakemake --profile workflow/profiles/slurm --use-apptainer provision
+```
 
 The workflow is three stages, split because Hyak compute nodes cannot be
 assumed to have outbound network access:

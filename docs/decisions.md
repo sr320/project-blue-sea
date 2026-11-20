@@ -7,9 +7,20 @@ Two of these change the build; the rest change the deliverable or the budget.
 - [x] **Both species.** *L. salmonis* and *C. rogercresseyi* run through the
       same cascade and their shortlists are intersected. Implemented:
       `config.yaml:species`, `orthology.intersect_shortlists`.
+- [x] **RefSeq gene models for *L. salmonis*.** The config previously named
+      `GCA_016086655.3`, which carries no annotation — no `GCA_016086655.x`
+      version does, so none of them has a proteome to screen. Now
+      `GCF_016086655.4`, the RefSeq annotation of the same UVic assembly line,
+      19,574 genes. The Stirling annotations are the alternative and are
+      closer to the 14,014 figure this README used to quote; switching is a
+      two-line config change. See `docs/reference-data.md`.
 - [ ] **Who runs wet-lab validation, and is there a collaborator for challenge
       trials?** Steps 1–3 of the bench sequence are plausibly in-house; step 4
       is not.
+- [ ] **Map the control sets to real accessions.** `resources/controls/*.tsv`
+      hold symbolic ids that match nothing in any proteome, so the gate fails
+      by construction. This blocks the first real run and cannot be done until
+      `provision` has put the proteomes on disk.
 - [ ] **Total API budget ceiling for the first full run.** Currently
       `config.yaml:llm.budget_usd` sums to $400 with the symbiont arm capped
       at $60 (15%). These are planning placeholders, not a quote.
