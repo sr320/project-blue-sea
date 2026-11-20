@@ -56,7 +56,7 @@ def test_dry_run_makes_no_calls(tmp_path):
     assert fake.calls == 0
     report = client.report()
     assert report["dry_run"] is True
-    assert report["stages"]["literature"]["calls"] == 1   # projected, not spent
+    assert report["stages"]["literature"]["calls"] == 1  # projected, not spent
     assert report["total_cost_usd"] > 0
 
 
@@ -140,3 +140,70 @@ def test_unblinded_prompt_keeps_the_annotation():
     prompt = build_prompt(record, blinded=False, blinded_terms=["vaccine"])
     assert "vaccine antigen" in prompt
     assert BLINDING_NOTE not in prompt
+
+
+def test_no_sources_means_no_model_call(tmp_path):
+    from bluesea.literature import assess
+
+    fake = FakeClient()
+    record = make_record("NO_SOURCES")
+    assess(record, make_cached_client(tmp_path, client=fake))
+    assert fake.calls == 0
+    assert record.literature is None
+    assert "literature_sources_missing" in record.flags
+
+
+def test_unknown_source_citation_cannot_influence_ranking(tmp_path):
+    from bluesea.literature import assess
+
+    fake = FakeClient('{"score": 0.99, "citations": ["invented-doi"]}')
+    record = make_record("UNSUPPORTED")
+    assess(
+        record,
+        make_cached_client(tmp_path, client=fake),
+        sources=[{"source_id": "doi:verified", "excerpt": "Test source."}],
+    )
+    assert record.literature is None
+    assert "literature_response_unsupported" in record.flags
+
+
+def test_blinded_benchmark_excludes_model_even_with_sources(tmp_path):
+    from bluesea.literature import assess
+
+    fake = FakeClient()
+    record = make_record("BENCHMARK")
+    assess(
+        record,
+        make_cached_client(tmp_path, client=fake),
+        blinded=True,
+        sources=[{"source_id": "doi:verified", "excerpt": "Test source."}],
+    )
+    assert fake.calls == 0
+    assert record.literature is None
+
+
+def test_source_packet_must_match_snapshot(tmp_path):
+    from bluesea.literature import load_sources
+    from bluesea.provenance import file_digest
+
+    snapshot = tmp_path / "source.txt"
+    snapshot.write_text("An experimentally documented result.")
+    packet = tmp_path / "packet.json"
+    packet.write_text(
+        json.dumps(
+            [
+                dict(
+                    source_id="doi:verified",
+                    url="https://example.org/paper",
+                    excerpt="An experimentally documented result.",
+                    snapshot_path="source.txt",
+                    snapshot_sha256=file_digest(snapshot),
+                    protein_ids=["p"],
+                )
+            ]
+        )
+    )
+    assert load_sources([str(packet)])["p"][0]["source_id"] == "doi:verified"
+    snapshot.write_text("Changed source.")
+    with pytest.raises(ValueError, match="snapshot mismatch"):
+        load_sources([str(packet)])

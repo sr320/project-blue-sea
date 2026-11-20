@@ -51,6 +51,28 @@ def _save_records(records: list[ProteinRecord], path: Path) -> None:
 # -- prefilter -------------------------------------------------------------
 
 
+def cmd_prepare(args: argparse.Namespace) -> int:
+    from .screening import prepare
+
+    prepare(io.load_config(args.config), args.species, io.load_config(args.weights))
+    return 0
+
+
+def cmd_verify_pilot(args: argparse.Namespace) -> int:
+    from .screening import require_pilot
+
+    require_pilot(io.load_config(args.config), io.load_config(args.weights))
+    return 0
+
+
+def cmd_check_gate(args: argparse.Namespace) -> int:
+    report = json.loads(Path(args.report).read_text())
+    if not report["gate_passed"]:
+        print("Gate failed; inspect the preserved benchmark report.", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_prefilter(args: argparse.Namespace) -> int:
     """Run the cheap half of the cascade and emit the survivor FASTA.
 
@@ -72,10 +94,18 @@ def cmd_prefilter(args: argparse.Namespace) -> int:
     reference = paths["reference"]
     scratch = paths["scratch"] / args.species
 
+    from .predictors import require_ids
+
     signalp = io.read_signalp(scratch / "signalp.tsv")
     tmhmm = io.read_deeptmhmm(scratch / "deeptmhmm.gff3")
-    secretome = _read_id_list(scratch / "secretome_confirmed.txt")
-    gpi = _read_id_list(scratch / "gpi_anchored.txt")
+    secretome = (
+        _read_id_list(reference / species_cfg["secretome"])
+        if species_cfg.get("secretome")
+        else set()
+    )
+    gpi = (
+        _read_id_list(reference / species_cfg["gpi"]) if species_cfg.get("gpi") else set()
+    )
 
     # The GFF is the only authoritative protein-to-gene link; NCBI protein
     # FASTA headers carry no gene tag, so without it every protein looks like
@@ -93,10 +123,18 @@ def cmd_prefilter(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
+    from .screening import HOST_PREFIX
+
+    fasta = list(io.read_fasta(scratch / "screen.faa"))
+    expected = {pid for pid, _, _ in fasta}
+    if len(expected) != len(fasta):
+        raise ValueError("Duplicate proteome identifiers")
+    require_ids(set(signalp), expected, "SignalP")
+    require_ids(set(tmhmm), expected, "DeepTMHMM")
     records = []
-    for protein_id, description, sequence in io.read_fasta(
-        reference / species_cfg["proteome"]
-    ):
+    for protein_id, description, sequence in fasta:
+        if tmhmm[protein_id]["sequence"].upper() != sequence.upper():
+            raise ValueError(f"DeepTMHMM sequence mismatch: {protein_id}")
         gene_id, gene_symbol = gene_map.get(
             protein_id, (_gene_of(protein_id, description), "")
         )
@@ -107,9 +145,10 @@ def cmd_prefilter(args: argparse.Namespace) -> int:
             species=args.species,
             sequence=sequence,
             description=description,
-            topology=io.topology_from_tools(
-                protein_id, signalp, tmhmm, secretome, gpi
-            ),
+            benchmark_only=protein_id.startswith(HOST_PREFIX),
+            expected_stages=io.species_stages(config, args.species),
+            early_stages=species_cfg.get("early_stages", []),
+            topology=io.topology_from_tools(protein_id, signalp, tmhmm, secretome, gpi),
         )
         run_cascade(
             record,
@@ -180,15 +219,14 @@ def cmd_assemble(args: argparse.Namespace) -> int:
 
     epitopes = io.read_epitopes(scratch / "epitopes.tsv")
     host_hits = io.read_blast_tabular(scratch / "vs_host.tsv")
+    stages = io.species_stages(config, args.species)
     expression = (
-        io.read_expression(reference / species_cfg["expression"], config["life_stages"])
+        io.read_expression(reference / species_cfg["expression"], stages)
         if species_cfg.get("expression")
         else {}
     )
     rnai = (
-        io.read_rnai(reference / species_cfg["rnai"])
-        if species_cfg.get("rnai")
-        else {}
+        io.read_rnai(reference / species_cfg["rnai"]) if species_cfg.get("rnai") else {}
     )
 
     # Mirror the prefilter's own forwarding rule, so the records enriched here
@@ -203,8 +241,15 @@ def cmd_assemble(args: argparse.Namespace) -> int:
         if enabled and not record.survived:
             continue
         record.epitopes = epitopes.get(record.protein_id, [])
+        hits = host_hits.get(record.protein_id, [])
+        record.host_hits = io.host_alignments(hits, record.length)
         record.host_hit = io.best_host_hit(
-            host_hits.get(record.protein_id, []), record.length
+            hits, record.length, config["cascade"]["host_similarity"]
+        )
+        record.assayed_stages = (
+            io.expression_stages(reference / species_cfg["expression"], stages)
+            if species_cfg.get("expression")
+            else []
         )
 
         value, key = _lookup_by_gene(expression, record)
@@ -229,6 +274,11 @@ def cmd_assemble(args: argparse.Namespace) -> int:
         enriched,
         [("expression", expression, joined_expression), ("rnai", rnai, joined_rnai)],
     )
+    if any(
+        table and joined == 0
+        for table, joined in [(expression, joined_expression), (rnai, joined_rnai)]
+    ):
+        return 1
     for label, count in sorted(key_hits.items()):
         # Which key form carried the join: a table joining only on protein_id
         # is keyed per isoform, not per gene, and will miss siblings.
@@ -263,18 +313,14 @@ def _gene_keys(record: ProteinRecord) -> list[tuple[str, str]]:
     return unique
 
 
-def _lookup_by_gene(
-    table: dict[str, Any], record: ProteinRecord
-) -> tuple[Any, str]:
+def _lookup_by_gene(table: dict[str, Any], record: ProteinRecord) -> tuple[Any, str]:
     for label, key in _gene_keys(record):
         if key in table:
             return table[key], label
     return None, ""
 
 
-def _report_joins(
-    enriched: int, tables: list[tuple[str, dict[str, Any], int]]
-) -> None:
+def _report_joins(enriched: int, tables: list[tuple[str, dict[str, Any], int]]) -> None:
     """Say how much of each gene-keyed table actually matched.
 
     Expression and RNAi join on `gene_id`, which comes from the `[gene=...]`
@@ -300,8 +346,6 @@ def _report_joins(
 
 
 def _read_id_list(path: Path) -> set[str]:
-    if not path.exists():
-        return set()
     return {line.strip() for line in path.read_text().splitlines() if line.strip()}
 
 
@@ -375,29 +419,40 @@ def cmd_orthology(args: argparse.Namespace) -> int:
     config = io.load_config(args.config)
     paths = _paths(config)
     species = list(config["species"])
+    if len(species) == 1:
+        name = species[0]
+        records = _load_records(_records_path(paths, name, "cascaded"))
+        _save_records(records, _records_path(paths, name, "orthologized"))
+        return 0
     if len(species) != 2:
-        print("orthology expects exactly two species", file=sys.stderr)
-        return 2
+        raise ValueError("orthology expects one or two species")
     first, second = species
-
     forward = io.read_blast_tabular(paths["scratch"] / f"{first}_vs_{second}.tsv")
     reverse = io.read_blast_tabular(paths["scratch"] / f"{second}_vs_{first}.tsv")
-    pairs = orthology.reciprocal_best_hits(forward, reverse, config["orthology"])
-    reverse_pairs = orthology.reciprocal_best_hits(
-        reverse, forward, config["orthology"]
-    )
-
-    for source, partner, table in (
-        (first, second, pairs),
-        (second, first, reverse_pairs),
+    for source, partner, fwd, rev in (
+        (first, second, forward, reverse),
+        (second, first, reverse, forward),
     ):
-        path = _records_path(paths, source, "survivors")
-        records = {r.protein_id: r for r in _load_records(path)}
-        orthology.attach_orthologs(records, table, partner, config["orthology"])
-        _save_records(list(records.values()), path)
-
-    n_reciprocal = sum(1 for pair in pairs.values() if pair["reciprocal"])
-    print(f"{len(pairs)} ortholog pairs, {n_reciprocal} reciprocal best hits")
+        pairs = orthology.reciprocal_best_hits(fwd, rev, config["orthology"])
+        records = {
+            r.protein_id: r
+            for r in _load_records(_records_path(paths, source, "cascaded"))
+        }
+        sequences = {
+            pid: seq
+            for pid, _, seq in io.read_fasta(
+                paths["reference"] / config["species"][partner]["proteome"]
+            )
+        }
+        for record in records.values():
+            record.orthologs = []
+        orthology.attach_orthologs(
+            records, pairs, partner, config["orthology"], sequences
+        )
+        _save_records(
+            list(records.values()), _records_path(paths, source, "orthologized")
+        )
+        print(f"{source}: {len(pairs)} cross-species matches")
     return 0
 
 
@@ -405,7 +460,7 @@ def cmd_orthology(args: argparse.Namespace) -> int:
 
 
 def cmd_literature(args: argparse.Namespace) -> int:
-    from .literature import assess_all
+    from .literature import assess_all, load_sources
     from .llm import client_from_config
 
     config = io.load_config(args.config)
@@ -415,14 +470,19 @@ def cmd_literature(args: argparse.Namespace) -> int:
         {"cache": paths["cache"]},
         dry_run=not args.live,
     )
-    records = _load_records(_records_path(paths, args.species, "survivors"))
+    records = [
+        r
+        for r in _load_records(_records_path(paths, args.species, "orthologized"))
+        if r.survived and not r.benchmark_only
+    ]
     assess_all(
         records,
         client,
         blinded=args.blinded,
         blinded_terms=config["llm"]["blinded_terms"],
+        sources_by_protein=load_sources(config.get("literature_sources", [])),
     )
-    _save_records(records, _records_path(paths, args.species, "survivors"))
+    _save_records(records, _records_path(paths, args.species, "assessed"))
 
     report = client.report()
     (paths["logs"] / f"llm_usage_{args.species}.json").parent.mkdir(
@@ -450,7 +510,7 @@ def cmd_rank(args: argparse.Namespace) -> int:
 
     per_species: dict[str, list[ProteinRecord]] = {}
     for species in config["species"]:
-        records = _load_records(_records_path(paths, species, "survivors"))
+        records = _load_records(_records_path(paths, species, "assessed"))
         per_species[species] = scoring.rank(records, weights_cfg)
 
     # Flag the intersection before writing: a cross-species candidate is the
@@ -459,21 +519,38 @@ def cmd_rank(args: argparse.Namespace) -> int:
     names = list(per_species)
     if len(names) == 2:
         shared = orthology.intersect_shortlists(
-            per_species[names[0]], per_species[names[1]]
+            per_species[names[0]], per_species[names[1]], config["orthology"]
         )
         print(f"{len(shared)} cross-species candidates")
 
+    all_records = [r for rows in per_species.values() for r in rows]
+    representatives = scoring.gene_representatives(all_records)
+    sensitivity = validation.sensitivity_report(
+        representatives, weights_cfg, config["validation"]
+    )
+    (paths["results"]).mkdir(parents=True, exist_ok=True)
+    (paths["results"] / "ranking_sensitivity.json").write_text(
+        json.dumps(sensitivity, indent=2)
+    )
+    for record in all_records:
+        if any(
+            r.species == record.species
+            and r.gene_id == record.gene_id
+            and "single_source_dependent" in r.flags
+            for r in representatives
+        ):
+            record.flag("single_source_dependent")
     everything: list[ProteinRecord] = []
     for species, ranked in per_species.items():
         _save_records(ranked, _records_path(paths, species, "ranked"))
         io.write_tsv(
             paths["results"] / species / "ranked.tsv",
-            scoring.ranking_rows(ranked),
+            scoring.ranking_rows(scoring.gene_representatives(ranked)),
             scoring.RANKING_COLUMNS,
         )
-        everything.extend(ranked)
+        everything.extend(scoring.gene_representatives(ranked))
 
-    combined = sorted(everything, key=lambda r: r.total_score, reverse=True)
+    combined = sorted(everything, key=lambda r: (-r.total_score, r.species, r.protein_id))
     io.write_tsv(
         paths["results"] / "ranked_all.tsv",
         scoring.ranking_rows(combined),
@@ -500,8 +577,7 @@ def cmd_dossiers(args: argparse.Namespace) -> int:
     records: list[ProteinRecord] = []
     for species in config["species"]:
         path = _records_path(paths, species, "ranked")
-        if path.exists():
-            records.extend(_load_records(path))
+        records.extend(scoring.gene_representatives(_load_records(path)))
     records.sort(key=lambda r: r.total_score, reverse=True)
 
     trail = provenance.collect(args.config, args.weights)
@@ -523,9 +599,8 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
 
     records: list[ProteinRecord] = []
     for species in config["species"]:
-        path = _records_path(paths, species, "cascaded")
-        if path.exists():
-            records.extend(_load_records(path))
+        path = _records_path(paths, species, "orthologized")
+        records.extend(_load_records(path))
 
     positives = {
         row["protein_id"]: _control_accessions(row)
@@ -535,11 +610,44 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
         row["protein_id"]: (row["expected_drop_step"], _control_accessions(row))
         for row in io.read_tsv(validation_cfg["negative_controls"])
     }
+    for species in config["species"]:
+        spike_path = paths["scratch"] / species / "host_spikes.json"
+        if spike_path.exists():
+            for row in json.loads(spike_path.read_text()):
+                negatives[row["protein_id"]] = (
+                    row["expected_drop_step"],
+                    {row["protein_id"]},
+                )
     random_ids = _sample_random_controls(records, validation_cfg, positives, negatives)
 
     report = validation.run_benchmark(
         records, weights_cfg, validation_cfg, positives, negatives, random_ids
     )
+    constructs_path = validation_cfg.get("construct_controls")
+    if constructs_path:
+        with open(constructs_path) as handle:
+            constructs = json.load(handle)
+        report["experimental_constructs"] = validation.construct_report(
+            records, weights_cfg, validation_cfg, constructs
+        )
+        if not positives:
+            report["gate_passed"] = (
+                report["negative_controls"]["passed"]
+                and report["sensitivity_validation"]["passed"]
+                and report["experimental_constructs"]["recovery_passed"]
+            )
+        report["gate_passed"] &= report["experimental_constructs"]["ready"]
+    if validation_cfg.get("require_host_spikes", False):
+        generated = [pid for pid in negatives if pid.startswith("BLUESEA_HOST_SPIKE_")]
+        report["host_spikes_present"] = len(generated) >= validation_cfg.get(
+            "host_spike_n", 3
+        ) and all(any(r.protein_id == pid for r in records) for pid in generated)
+        report["gate_passed"] &= report["host_spikes_present"]
+    from .screening import signature
+
+    report["screening_signature"] = signature(config, weights_cfg)
+    report["screening_mode"] = config.get("screening", {}).get("mode", "pilot")
+    report["input_stage"] = "orthologized"
     out = paths["results"] / "benchmark.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2))
@@ -549,11 +657,11 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
         # Non-zero exit stops the workflow here on purpose. A failed gate means
         # rebuild the rubric, not press on to the full run.
         print(
-            "\nGATE FAILED: known-working antigens did not reach the top tier "
+            "\nGATE FAILED: control completeness or antigen recovery did not pass "
             "on deterministic evidence. Rebuild the rubric before the full run.",
             file=sys.stderr,
         )
-        return 1
+        return 0 if args.report_only else 1
     print("\nGate passed.")
     return 0
 
@@ -633,6 +741,10 @@ def build_parser() -> argparse.ArgumentParser:
             sub.add_argument("--species", required=True)
         return sub
 
+    add("prepare", cmd_prepare, species=True)
+    add("verify-pilot", cmd_verify_pilot)
+    check_gate = add("check-gate", cmd_check_gate)
+    check_gate.add_argument("--report", required=True)
     prefilter = add("prefilter", cmd_prefilter, species=True)
     prefilter.add_argument(
         "--profile",
@@ -663,7 +775,8 @@ def build_parser() -> argparse.ArgumentParser:
     add("rank", cmd_rank)
     dossiers = add("dossiers", cmd_dossiers)
     dossiers.add_argument("--top", type=int, default=45)
-    add("benchmark", cmd_benchmark)
+    benchmark = add("benchmark", cmd_benchmark)
+    benchmark.add_argument("--report-only", action="store_true")
     symbiont = add("symbiont-gate", cmd_symbiont_gate)
     symbiont.add_argument("--mags", required=True)
     return parser

@@ -13,22 +13,46 @@
 # `snakemake all` is worth running.
 
 import os
+import json
+import yaml
+from pathlib import Path
 
 configfile: "config/config.yaml"
 
 
+CONFIG_SOURCES = list(map(str, workflow.configfiles))
+COMMON = list(dict.fromkeys([*map(str, workflow.configfiles), "config/weights.yaml",
+                            *(["containers/bluesea.sif"] if Path("containers/bluesea.sif").exists() else []),
+                            *map(str, Path("src/bluesea").glob("*.py"))]))
+CONTROL_FILES = [config["validation"][k] for k in
+                 ["positive_controls", "negative_controls", "construct_controls"]
+                 if config["validation"].get(k)]
+def literature_inputs(wc):
+    packets = config.get("literature_sources", [])
+    snapshots = [str(Path(path).parent / source["snapshot_path"])
+                 for path in packets for source in json.loads(Path(path).read_text())]
+    return [*packets, *snapshots]
+
+
+if config["validation"].get("construct_controls"):
+    registry = json.loads(Path(config["validation"]["construct_controls"]).read_text())
+    CONTROL_FILES.extend(c["sequence_file"] for c in registry["constructs"] if c.get("sequence_file"))
+
+
 SPECIES = list(config["species"])
-REFERENCE = config["paths"]["reference"]
-SCRATCH = config["paths"]["scratch"]
-RESULTS = config["paths"]["results"]
+ROOT = config.get("workdir", ".")
+REFERENCE = os.path.normpath(os.path.join(ROOT, config["paths"]["reference"]))
+SCRATCH = os.path.normpath(os.path.join(ROOT, config["paths"]["scratch"]))
+RESULTS = os.path.normpath(os.path.join(ROOT, config["paths"]["results"]))
+LOGS = os.path.normpath(os.path.join(ROOT, config["paths"]["logs"]))
+CONFIG = os.path.join(SCRATCH, "resolved_config.yaml")
+COMMON.append(CONFIG)
 HOST_PROTEOME = os.path.join(REFERENCE, config["host"]["proteome"])
 
-# Shard counts for the per-protein predictors. Tune to the queue, not to the
-# proteome: more shards means more jobs, not less work. `seqkit split2` numbers
-# its parts from 001, so the shard ids do too.
+# Shard counts cap parallel jobs. Checkpoints handle fewer proteins than
+# requested shards; the Python sharder numbers parts from 001.
 N_SHARDS = config.get("n_shards", 50)
 N_SHARDS_CANDIDATES = config.get("n_shards_candidates", 10)
-SHARDS = [f"{i:03d}" for i in range(1, N_SHARDS + 1)]
 
 CONTAINER = "containers/bluesea.sif"
 
@@ -74,9 +98,10 @@ wildcard_constraints:
 #
 # The two merges are local because they are `cat` and submitting them costs
 # more in queue latency than running them. `orthology` is not: it parses both
-# DIAMOND tables and rewrites every survivor record, which is real work and
+# DIAMOND tables and writes separate enriched records, which is real work and
 # does not belong on a shared login node.
 localrules:
+    resolved_config,
     literature,
     download_proteome,
     download_gff,
@@ -89,13 +114,15 @@ rule all:
         f"{RESULTS}/ranked_all.tsv",
         f"{RESULTS}/dossiers",
         f"{RESULTS}/provenance.json",
+        f"{RESULTS}/ranking_sensitivity.json",
+        f"{RESULTS}/benchmark.json",
 
 
 rule gate:
     """The six-week decision. Fails loudly if the rubric does not recover the
     known-working antigens on deterministic evidence alone."""
     input:
-        f"{RESULTS}/benchmark.json",
+        f"{RESULTS}/gate.passed",
 
 
 rule provision:
@@ -133,9 +160,9 @@ rule download_proteome:
     retries: 3
     shell:
         """
-        curl -fsSL --retry 3 --retry-delay 5 -o {output}.gz {params.url}
-        gunzip -c {output}.gz > {output}
-        rm -f {output}.gz
+        curl -fsSL --retry 3 --retry-delay 5 -o {output:q}.gz {params.url:q}
+        gunzip -c {output:q}.gz > {output:q}
+        rm -f {output:q}.gz
         """
 
 
@@ -153,9 +180,9 @@ rule download_gff:
     retries: 3
     shell:
         """
-        curl -fsSL --retry 3 --retry-delay 5 -o {output}.gz {params.url}
-        gunzip -c {output}.gz > {output}
-        rm -f {output}.gz
+        curl -fsSL --retry 3 --retry-delay 5 -o {output:q}.gz {params.url:q}
+        gunzip -c {output:q}.gz > {output:q}
+        rm -f {output:q}.gz
         """
 
 
@@ -175,50 +202,94 @@ rule diamond_db:
     container:
         CONTAINER
     shell:
-        "diamond makedb --in {input} -d {params.base} --threads {threads}"
+        "diamond makedb --in {input:q} -d {params.base:q} --threads {threads}"
 
 
-# ---------------------------------------------------------------------------
-# Stage 1a -- topology, proteome-wide
-#
-# SignalP and DeepTMHMM have to see every protein, because the exposure filter
-# is built on them and that filter is what decides who the expensive
-# predictors get to skip.
-# ---------------------------------------------------------------------------
-
-
-rule shard_proteome:
+# Local model installation is checked before any predictor job is submitted.
+rule resolved_config:
     input:
-        proteome=lambda wc: os.path.join(
-            REFERENCE, config["species"][wc.species]["proteome"]
-        ),
+        CONFIG_SOURCES,
     output:
-        # Named explicitly rather than as a directory: the proteome always has
-        # far more sequences than shards, so the part list is known up front,
-        # and Snakemake can then see which rule produces each shard.
-        expand(f"{SCRATCH}/{{{{species}}}}/shards/part_{{shard}}.faa", shard=SHARDS),
+        CONFIG,
     params:
-        n=N_SHARDS,
-        outdir=f"{SCRATCH}/{{species}}/shards",
+        snapshot=lambda wc: json.dumps(config, sort_keys=True, indent=2),
+    run:
+        # Preserve numeric types when handing Snakemake config to PyYAML.
+        # JSON exponent syntax is otherwise parsed as strings by YAML 1.1.
+        Path(output[0]).parent.mkdir(parents=True, exist_ok=True)
+        Path(output[0]).write_text(yaml.safe_dump(json.loads(params.snapshot)))
+
+
+rule tools_check:
+    input:
+        config=COMMON,
+        models=[path for tool in config.get("predictors", {}).values()
+                for path in tool.get("required_files", []) if os.path.isfile(path)],
+    output:
+        f"{SCRATCH}/tools.ready",
     container:
         CONTAINER
     shell:
-        """
-        mkdir -p {params.outdir}
-        seqkit split2 --by-part {params.n} --out-dir {params.outdir} {input.proteome}
-        # seqkit names each part after the input file (proteins.part_001.faa);
-        # downstream rules match on the shard number alone.
-        for part in {params.outdir}/*.part_*; do
-            mv "$part" "{params.outdir}/part_${{part##*.part_}}"
-        done
-        """
+        "python -m bluesea.predictors --config {CONFIG:q} --check --output {output:q}"
+
+
+rule pilot_check:
+    input:
+        config=COMMON,
+        controls=CONTROL_FILES,
+        references=[os.path.join(REFERENCE, cfg[key]) for cfg in config["species"].values()
+                    for key in ["proteome", "gff", "expression", "rnai", "secretome", "gpi"] if cfg.get(key)] + [HOST_PROTEOME],
+        report=[config["screening"]["pilot_report"]] if config.get("screening", {}).get("mode") == "full" else [],
+    output:
+        touch(f"{SCRATCH}/pilot.approved"),
+    container:
+        CONTAINER
+    shell:
+        "bluesea --config {CONFIG:q} --weights config/weights.yaml verify-pilot"
+
+
+rule prepare:
+    input:
+        config=COMMON,
+        approval=f"{SCRATCH}/pilot.approved",
+        proteome=lambda wc: os.path.join(REFERENCE, config["species"][wc.species]["proteome"]),
+        host=HOST_PROTEOME,
+        controls=CONTROL_FILES,
+    output:
+        fasta=f"{SCRATCH}/{{species}}/screen.faa",
+        spikes=f"{SCRATCH}/{{species}}/host_spikes.json",
+    container:
+        CONTAINER
+    shell:
+        "bluesea --config {CONFIG:q} --weights config/weights.yaml prepare --species {wildcards.species}"
+
+
+checkpoint shard_topology:
+    input:
+        fasta=f"{SCRATCH}/{{species}}/screen.faa",
+        ready=f"{SCRATCH}/tools.ready",
+        config=COMMON,
+    output:
+        directory(f"{SCRATCH}/{{species}}/shards"),
+    container:
+        CONTAINER
+    shell:
+        "python -m bluesea.shard --input {input.fasta:q} --output-dir {output:q} --n {N_SHARDS}"
+
+
+def topology_parts(wc, tool, extension):
+    path = checkpoints.shard_topology.get(species=wc.species).output[0]
+    shards = sorted(glob_wildcards(os.path.join(path, "part_{shard}.faa")).shard)
+    return expand(f"{SCRATCH}/{{species}}/{tool}/{{shard}}.{extension}", species=wc.species, shard=shards)
 
 
 rule signalp:
     input:
-        f"{SCRATCH}/{{species}}/shards/part_{{shard}}.faa",
+        fasta=f"{SCRATCH}/{{species}}/shards/part_{{shard}}.faa",
+        config=COMMON,
     output:
-        f"{SCRATCH}/{{species}}/signalp/{{shard}}.tsv",
+        table=f"{SCRATCH}/{{species}}/signalp/{{shard}}.tsv",
+        raw=directory(f"{SCRATCH}/{{species}}/raw/signalp/{{shard}}"),
     threads: 4
     resources:
         mem_mb=16000,
@@ -226,16 +297,17 @@ rule signalp:
     container:
         CONTAINER
     shell:
-        "signalp6 --fastafile {input} --organism eukarya --format none "
-        "--output_dir $(dirname {output}) && "
-        "mv $(dirname {output})/prediction_results.txt {output}"
+        "python -m bluesea.predictors --config {CONFIG:q} --tool signalp "
+        "--fasta {input.fasta:q} --output {output.table:q} --raw-dir {output.raw:q} --threads {threads}"
 
 
 rule deeptmhmm:
     input:
-        f"{SCRATCH}/{{species}}/shards/part_{{shard}}.faa",
+        fasta=f"{SCRATCH}/{{species}}/shards/part_{{shard}}.faa",
+        config=COMMON,
     output:
-        f"{SCRATCH}/{{species}}/deeptmhmm/{{shard}}.gff3",
+        table=f"{SCRATCH}/{{species}}/deeptmhmm/{{shard}}.3line",
+        raw=directory(f"{SCRATCH}/{{species}}/raw/deeptmhmm/{{shard}}"),
     threads: 4
     resources:
         mem_mb=16000,
@@ -243,146 +315,114 @@ rule deeptmhmm:
     container:
         CONTAINER
     shell:
-        "biolib run DTU/DeepTMHMM --fasta {input} --out-dir $(dirname {output}) && "
-        "mv $(dirname {output})/predicted_topologies.3line {output}"
+        "python -m bluesea.predictors --config {CONFIG:q} --tool deeptmhmm "
+        "--fasta {input.fasta:q} --output {output.table:q} --raw-dir {output.raw:q} --threads {threads}"
 
 
 rule merge_topology:
     input:
-        signalp=expand(
-            f"{SCRATCH}/{{{{species}}}}/signalp/{{shard}}.tsv", shard=SHARDS
-        ),
-        tmhmm=expand(
-            f"{SCRATCH}/{{{{species}}}}/deeptmhmm/{{shard}}.gff3", shard=SHARDS
-        ),
+        signalp=lambda wc: topology_parts(wc, "signalp", "tsv"),
+        tmhmm=lambda wc: topology_parts(wc, "deeptmhmm", "3line"),
     output:
         signalp=f"{SCRATCH}/{{species}}/signalp.tsv",
         tmhmm=f"{SCRATCH}/{{species}}/deeptmhmm.gff3",
     shell:
-        """
-        cat {input.signalp} > {output.signalp}
-        cat {input.tmhmm} > {output.tmhmm}
-        """
-
-
-# ---------------------------------------------------------------------------
-# Stage 1b -- the prefilter, and the predictors that run behind it
-#
-# This is the split that makes the README's claim true: epitope prediction and
-# the salmon homology search only ever see proteins that passed length,
-# low-complexity and exposure. Exposure alone cuts about eight in nine, so
-# these two rules do roughly a ninth of the work they used to.
-# ---------------------------------------------------------------------------
+        "cat {input.signalp:q} > {output.signalp:q}; cat {input.tmhmm:q} > {output.tmhmm:q}"
 
 
 rule prefilter:
     input:
         signalp=f"{SCRATCH}/{{species}}/signalp.tsv",
         tmhmm=f"{SCRATCH}/{{species}}/deeptmhmm.gff3",
-        proteome=lambda wc: os.path.join(
-            REFERENCE, config["species"][wc.species]["proteome"]
-        ),
-        gff=lambda wc: os.path.join(
-            REFERENCE, config["species"][wc.species]["gff"]
-        ),
+        proteome=f"{SCRATCH}/{{species}}/screen.faa",
+        gff=lambda wc: os.path.join(REFERENCE, config["species"][wc.species]["gff"]),
+        evidence=lambda wc: [os.path.join(REFERENCE, config["species"][wc.species][key])
+                             for key in ["secretome", "gpi"] if config["species"][wc.species].get(key)],
+        config=COMMON,
     output:
         records=f"{SCRATCH}/{{species}}/prefiltered.json",
         candidates=f"{SCRATCH}/{{species}}/candidates.faa",
-    resources:
-        mem_mb=8000,
-        runtime=60,
     container:
         CONTAINER
     shell:
-        "bluesea --config config/config.yaml prefilter --species {wildcards.species}"
+        "bluesea --config {CONFIG:q} prefilter --species {wildcards.species}"
 
 
 checkpoint shard_candidates:
-    """A checkpoint in earnest: how many proteins clear the prefilter is not
-    known until it has run, so the shard list cannot be built in advance."""
     input:
-        f"{SCRATCH}/{{species}}/candidates.faa",
+        fasta=f"{SCRATCH}/{{species}}/candidates.faa",
+        config=COMMON,
     output:
         directory(f"{SCRATCH}/{{species}}/candidate_shards"),
-    params:
-        n=N_SHARDS_CANDIDATES,
     container:
         CONTAINER
     shell:
-        """
-        mkdir -p {output}
-        seqkit split2 --by-part {params.n} --out-dir {output} {input}
-        for part in {output}/*.part_*; do
-            mv "$part" "{output}/part_${{part##*.part_}}"
-        done
-        """
+        "python -m bluesea.shard --input {input.fasta:q} --output-dir {output:q} --n {N_SHARDS_CANDIDATES}"
 
 
 rule epitopes:
     input:
-        f"{SCRATCH}/{{species}}/candidate_shards/part_{{shard}}.faa",
+        fasta=f"{SCRATCH}/{{species}}/candidate_shards/part_{{shard}}.faa",
+        config=COMMON,
     output:
-        f"{SCRATCH}/{{species}}/epitopes/{{shard}}.tsv",
+        table=f"{SCRATCH}/{{species}}/epitopes/{{shard}}.tsv",
+        raw=directory(f"{SCRATCH}/{{species}}/raw/bepipred/{{shard}}"),
     threads: 2
     resources:
-        mem_mb=8000,
+        mem_mb=16000,
         runtime=120,
     container:
         CONTAINER
     shell:
-        "bepipred3 -i {input} -o {output} --threshold "
-        f"{config['cascade']['epitope']['min_epitope_score']}"
+        "python -m bluesea.predictors --config {CONFIG:q} --tool bepipred "
+        "--fasta {input.fasta:q} --output {output.table:q} --raw-dir {output.raw:q} --threads {threads}"
 
 
 rule host_blast:
-    """Cross-reactivity screen against the salmon proteome.
-
-    Sensitive mode on purpose: a missed salmon homolog is a candidate that
-    should never have survived, which is far worse here than a slow search.
-    Restricting it to prefilter survivors misses nothing -- a protein with no
-    route to host antibody is already excluded on that ground.
-    """
     input:
         query=f"{SCRATCH}/{{species}}/candidate_shards/part_{{shard}}.faa",
-        db=f"{REFERENCE}/ssal/ssal.dmnd",
+        db=f"{REFERENCE}/{HOST_DIR}/{HOST_DIR}.dmnd",
+        config=COMMON,
     output:
         f"{SCRATCH}/{{species}}/vs_host/{{shard}}.tsv",
     threads: 8
     resources:
         mem_mb=32000,
         runtime=240,
+    params:
+        evalue=config["cascade"]["host_similarity"]["max_evalue"],
     container:
         CONTAINER
     shell:
-        "diamond blastp --very-sensitive -q {input.query} -d {input.db} "
-        "-o {output} --outfmt 6 --max-target-seqs 5 --threads {threads} "
-        f"--evalue {config['cascade']['host_similarity']['max_evalue']}"
+        "diamond blastp --very-sensitive -q {input.query:q} -d {input.db:q} "
+        "-o {output:q} --outfmt 6 --max-target-seqs 0 --threads {threads} --evalue {params.evalue}"
 
 
-def candidate_shards(wildcards, subdir, extension):
-    """Expand over the shards the prefilter actually produced."""
-    shard_dir = checkpoints.shard_candidates.get(species=wildcards.species).output[0]
-    shards = glob_wildcards(os.path.join(shard_dir, "part_{shard}.faa")).shard
-    return expand(
-        f"{SCRATCH}/{{species}}/{subdir}/{{shard}}.{extension}",
-        species=wildcards.species,
-        shard=sorted(shards),
-    )
+def candidate_parts(wc, tool):
+    path = checkpoints.shard_candidates.get(species=wc.species).output[0]
+    shards = sorted(glob_wildcards(os.path.join(path, "part_{shard}.faa")).shard)
+    return expand(f"{SCRATCH}/{{species}}/{tool}/{{shard}}.tsv", species=wc.species, shard=shards)
 
 
 rule merge_candidate_predictions:
     input:
-        epitopes=lambda wc: candidate_shards(wc, "epitopes", "tsv"),
-        host=lambda wc: candidate_shards(wc, "vs_host", "tsv"),
+        epitopes=lambda wc: candidate_parts(wc, "epitopes"),
+        host=lambda wc: candidate_parts(wc, "vs_host"),
     output:
         epitopes=f"{SCRATCH}/{{species}}/epitopes.tsv",
         host=f"{SCRATCH}/{{species}}/vs_host.tsv",
-    shell:
-        """
-        head -n 1 {input.epitopes[0]} > {output.epitopes}
-        tail -q -n +2 {input.epitopes} >> {output.epitopes}
-        cat {input.host} > {output.host}
-        """
+    run:
+        with open(output.epitopes, "w") as out:
+            for index, path in enumerate(input.epitopes):
+                with open(path) as handle:
+                    header = next(handle)
+                    if index == 0:
+                        out.write(header)
+                    out.write(handle.read())
+        with open(output.host, "w") as out:
+            for path in input.host:
+                with open(path) as handle:
+                    out.write(handle.read())
 
 
 rule assemble:
@@ -390,36 +430,37 @@ rule assemble:
         records=f"{SCRATCH}/{{species}}/prefiltered.json",
         epitopes=f"{SCRATCH}/{{species}}/epitopes.tsv",
         host=f"{SCRATCH}/{{species}}/vs_host.tsv",
+        evidence=lambda wc: [os.path.join(REFERENCE, config["species"][wc.species][key])
+                             for key in ["expression", "rnai"] if config["species"][wc.species].get(key)],
+        config=COMMON,
     output:
         f"{SCRATCH}/{{species}}/assembled.json",
-    resources:
-        mem_mb=8000,
-        runtime=60,
     container:
         CONTAINER
     shell:
-        "bluesea --config config/config.yaml assemble --species {wildcards.species}"
+        "bluesea --config {CONFIG:q} assemble --species {wildcards.species}"
 
 
 rule cascade:
     input:
-        f"{SCRATCH}/{{species}}/assembled.json",
+        records=f"{SCRATCH}/{{species}}/assembled.json",
+        config=COMMON,
     output:
         cascaded=f"{SCRATCH}/{{species}}/cascaded.json",
         survivors=f"{SCRATCH}/{{species}}/survivors.json",
         summary=f"{RESULTS}/{{species}}/cascade_summary.tsv",
+        audit=f"{LOGS}/{{species}}/cascade_audit.jsonl",
     container:
         CONTAINER
     shell:
-        "bluesea --config config/config.yaml cascade --species {wildcards.species}"
+        "bluesea --config {CONFIG:q} cascade --species {wildcards.species}"
 
 
 rule cross_species_blast:
     input:
-        query=lambda wc: os.path.join(
-            REFERENCE, config["species"][wc.a]["proteome"]
-        ),
+        query=lambda wc: os.path.join(REFERENCE, config["species"][wc.a]["proteome"]),
         db=lambda wc: f"{REFERENCE}/{wc.b}/{wc.b}.dmnd",
+        config=COMMON,
     output:
         f"{SCRATCH}/{{a}}_vs_{{b}}.tsv",
     threads: 8
@@ -429,100 +470,100 @@ rule cross_species_blast:
     container:
         CONTAINER
     shell:
-        "diamond blastp --very-sensitive -q {input.query} -d {input.db} "
-        "-o {output} --outfmt 6 --max-target-seqs 5 --threads {threads}"
+        "diamond blastp --very-sensitive -q {input.query:q} -d {input.db:q} "
+        "-o {output:q} --outfmt 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qseq sseq "
+        "--max-target-seqs 5 --threads {threads}"
 
 
 rule orthology:
     input:
-        survivors=expand(f"{SCRATCH}/{{species}}/survivors.json", species=SPECIES),
-        # Not `forward`/`reverse`: `reverse` is reserved by Snakemake.
-        a_vs_b=f"{SCRATCH}/{SPECIES[0]}_vs_{SPECIES[1]}.tsv",
-        b_vs_a=f"{SCRATCH}/{SPECIES[1]}_vs_{SPECIES[0]}.tsv",
+        records=expand(f"{SCRATCH}/{{species}}/cascaded.json", species=SPECIES),
+        alignments=[f"{SCRATCH}/{a}_vs_{b}.tsv" for a in SPECIES for b in SPECIES if a != b],
+        config=COMMON,
     output:
-        touch(f"{SCRATCH}/orthology.done"),
+        expand(f"{SCRATCH}/{{species}}/orthologized.json", species=SPECIES),
     container:
         CONTAINER
     shell:
-        "bluesea --config config/config.yaml orthology"
-
-
-# ---------------------------------------------------------------------------
-# Stage 2 -- API calls. Needs outbound network; runs off the compute nodes.
-# ---------------------------------------------------------------------------
+        "bluesea --config {CONFIG:q} orthology"
 
 
 rule literature:
-    """Dry run by default, which is what any config change should get first.
-
-    Set BLUESEA_LIVE=1 to spend. Every response is cached on a hash of the
-    exact prompt, so a rerun re-spends nothing it has already paid for.
-    """
     input:
-        f"{SCRATCH}/orthology.done",
+        records=f"{SCRATCH}/{{species}}/orthologized.json",
+        config=COMMON,
+        sources=literature_inputs,
     output:
-        f"{config['paths']['logs']}/llm_usage_{{species}}.json",
+        records=f"{SCRATCH}/{{species}}/assessed.json",
+        usage=f"{LOGS}/llm_usage_{{species}}.json",
     resources:
-        # Caps concurrent API jobs at one; see localrules above for how this
-        # rule is kept off the compute nodes.
         network=1,
     params:
-        live=lambda wc: "--live" if os.environ.get("BLUESEA_LIVE") == "1" else "",
-        blinded=lambda wc: "--blinded" if os.environ.get("BLUESEA_BLINDED") == "1" else "",
+        live="--live" if os.environ.get("BLUESEA_LIVE") == "1" else "",
     shell:
-        "bluesea --config config/config.yaml literature "
-        "--species {wildcards.species} {params.live} {params.blinded}"
-
-
-# ---------------------------------------------------------------------------
-# Stage 3 -- scoring, ranking, dossiers
-# ---------------------------------------------------------------------------
+        "bluesea --config {CONFIG:q} literature --species {wildcards.species} {params.live}"
 
 
 rule rank:
     input:
-        expand(
-            f"{config['paths']['logs']}/llm_usage_{{species}}.json", species=SPECIES
-        ),
+        records=expand(f"{SCRATCH}/{{species}}/assessed.json", species=SPECIES),
+        config=COMMON,
     output:
         ranking=f"{RESULTS}/ranked_all.tsv",
         provenance=f"{RESULTS}/provenance.json",
+        sensitivity=f"{RESULTS}/ranking_sensitivity.json",
+        records=expand(f"{SCRATCH}/{{species}}/ranked.json", species=SPECIES),
+        per_species=expand(f"{RESULTS}/{{species}}/ranked.tsv", species=SPECIES),
     container:
         CONTAINER
     shell:
-        "bluesea --config config/config.yaml --weights config/weights.yaml rank"
+        "bluesea --config {CONFIG:q} --weights config/weights.yaml rank"
 
 
 rule dossiers:
     input:
-        f"{RESULTS}/ranked_all.tsv",
+        records=expand(f"{SCRATCH}/{{species}}/ranked.json", species=SPECIES),
+        config=COMMON,
     output:
         directory(f"{RESULTS}/dossiers"),
     container:
         CONTAINER
     shell:
-        "bluesea --config config/config.yaml --weights config/weights.yaml dossiers"
+        "bluesea --config {CONFIG:q} --weights config/weights.yaml dossiers"
 
 
 rule benchmark:
     input:
-        expand(f"{SCRATCH}/{{species}}/cascaded.json", species=SPECIES),
+        records=expand(f"{SCRATCH}/{{species}}/orthologized.json", species=SPECIES),
+        spikes=expand(f"{SCRATCH}/{{species}}/host_spikes.json", species=SPECIES),
+        controls=CONTROL_FILES,
+        config=COMMON,
     output:
         f"{RESULTS}/benchmark.json",
     container:
         CONTAINER
     shell:
-        "bluesea --config config/config.yaml --weights config/weights.yaml benchmark"
+        "bluesea --config {CONFIG:q} --weights config/weights.yaml benchmark --report-only"
+
+
+rule gate_check:
+    input:
+        f"{RESULTS}/benchmark.json",
+    output:
+        touch(f"{RESULTS}/gate.passed"),
+    container:
+        CONTAINER
+    shell:
+        "bluesea check-gate --report {input:q}"
 
 
 rule symbiont_gate:
-    """Go/no-go after MAG assembly. A no-go stops the track, and that negative
-    result is the deliverable for this arm."""
     input:
-        f"{SCRATCH}/symbiont/mags.json",
+        mags=f"{SCRATCH}/symbiont/mags.json",
+        config=COMMON,
     output:
         f"{RESULTS}/symbiont_gate.json",
     container:
         CONTAINER
     shell:
-        "bluesea --config config/config.yaml symbiont-gate --mags {input}"
+        "bluesea --config {CONFIG:q} symbiont-gate --mags {input.mags:q}"

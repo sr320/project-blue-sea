@@ -17,3 +17,9 @@ containers/*.sif
 # NOT ignored: cache/ is the API response cache. It is durable, it is what
 # makes a rerun free, and it carries the full prompt/response provenance for
 # every LLM-judged score. Keep it on a backed-up filesystem.
+
+# Site-provided licensed software and model weights.
+workflow/predictors/*
+!workflow/predictors/README.md
+
+.snakemake/

@@ -64,14 +64,15 @@ def symbiosis_signature(mag: MAG, cfg: dict[str, Any]) -> dict[str, Any]:
         if prevalence >= cfg["min_prevalence"]
     ]
     checks = {
+        "mag_quality": mag.completeness >= cfg.get("min_completeness", 90)
+        and mag.contamination <= cfg.get("max_contamination", 5),
         "present_across_populations": len(populations) >= cfg["min_populations_present"],
         "reduced_genome": mag.genome_size_mb <= cfg["max_genome_size_mb"],
         "pathway_loss": (
             bool(mag.lost_pathways) if cfg.get("require_pathway_loss", True) else True
         ),
         "phylogenetic_congruence": (
-            mag.phylogenetic_congruence is not None
-            and mag.phylogenetic_congruence >= 0.7
+            mag.phylogenetic_congruence is not None and mag.phylogenetic_congruence >= 0.7
         ),
     }
     # Two-species presence is the strongest form of the evidence: a bacterium
@@ -108,9 +109,7 @@ def gate(mags: list[MAG], cfg: dict[str, Any]) -> dict[str, Any]:
         assessments.append(symbiosis_signature(mag, signature_cfg))
 
     qualifying = [
-        assessment
-        for assessment in assessments
-        if all(assessment["checks"].values())
+        assessment for assessment in assessments if all(assessment["checks"].values())
     ]
     return {
         "proceed": bool(qualifying),

@@ -8,10 +8,9 @@
 # run inside the image it is building. It is a prerequisite of the workflow,
 # like scripts/hyak_preflight.sh, not a step in it.
 #
-# SignalP 6 and DeepTMHMM are licence-restricted and are not installable from
-# conda. The definition file expects their tarballs to be staged beside it; see
-# docs/reference-data.md. Without them the image still builds and everything
-# except the signalp and deeptmhmm rules will run.
+# Stage licensed local tools, model weights and install.sh in
+# workflow/predictors/ before building. See docs/tools.md. The base image
+# alone is insufficient; a post-build predictor check must pass.
 
 set -uo pipefail
 
@@ -74,6 +73,11 @@ fi
 if "$BUILDER" build "${BUILD_ARGS[@]}" "$OUT" "$DEF"; then
     head2 "Done"
     pass "$OUT ($(du -h "$OUT" | cut -f1))"
+    if ! "$BUILDER" exec "$OUT" python -m bluesea.predictors --config config/config.yaml --check; then
+        fail "image built, but predictor installation/configuration is incomplete"
+        note "configure the local tools and weights as described in docs/tools.md"
+        exit 1
+    fi
     note "next: snakemake --profile workflow/profiles/slurm --use-apptainer provision"
     exit 0
 fi

@@ -1,7 +1,6 @@
-# CI for the deterministic half of the project: the Python package and its
-# tests. Nothing here touches the cluster tools -- SignalP, DeepTMHMM,
-# BepiPred and DIAMOND are licence-restricted or too heavy for a runner, so
-# the workflow rules that call them stay unverified until they run on Hyak.
+# Core tests run across supported Python versions. A separate workflow job
+# exercises the actual DAG with native-format stand-ins; licensed models
+# still require a site pilot and independent biological validation.
 name: CI
 
 on:
@@ -47,3 +46,13 @@ jobs:
           cache-dependency-path: pyproject.toml
       - run: pip install -e '.[dev]'
       - run: pytest -q
+
+  workflow-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e '.[dev,workflow]'
+      - run: pytest -q tests/test_workflow_integration.py

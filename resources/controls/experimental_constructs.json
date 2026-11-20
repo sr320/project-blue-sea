@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "constructs": [
+    {
+      "construct_id": "Rodriguez2025_P0_my32",
+      "study_doi": "10.3389/fimmu.2025.1570948",
+      "source_url": "https://www.frontiersin.org/journals/immunology/articles/10.3389/fimmu.2025.1570948/full",
+      "source_location": "Methods 2.2; Results 3.3 and Figures 3-5",
+      "species": "lsal",
+      "host": "Salmo salar",
+      "construct_description": "L. salmonis P0 residues 267-301 fused to my32-Ls, with a C-terminal His tag",
+      "louse_components": [
+        {
+          "name": "P0",
+          "source_accession": "BT077866",
+          "source_region": "267-301 aa",
+          "mapped_accessions": [
+            "XP_040578982.1"
+          ],
+          "mapping_status": "fragment_mapping_pending"
+        },
+        {
+          "name": "my32",
+          "source_accession": "ADD38399",
+          "source_region": "my32-Ls insert; exact fusion sequence requires confirmation",
+          "mapped_accessions": [
+            "XP_040572108.1",
+            "XP_071746275.1",
+            "XP_071746276.1",
+            "XP_071746277.1"
+          ],
+          "mapping_status": "construct_mapping_pending"
+        }
+      ],
+      "formulation": "100 micrograms per fish; Montanide ISA50 V2; homologous prime-boost in freshwater",
+      "endpoints": [
+        {
+          "challenge_month_post_prime": 2,
+          "count_days_post_challenge": 32,
+          "endpoint": "lice count per fish",
+          "comparator": "non-injected control",
+          "reduction_pct": 91
+        },
+        {
+          "challenge_month_post_prime": 2,
+          "count_days_post_challenge": 32,
+          "endpoint": "lice count per fish",
+          "comparator": "adjuvant control",
+          "reduction_pct": 84
+        },
+        {
+          "challenge_month_post_prime": 5,
+          "count_days_post_challenge": 40,
+          "endpoint": "lice count per fish",
+          "comparator": "non-injected control",
+          "reduction_pct": 75.4
+        },
+        {
+          "challenge_month_post_prime": null,
+          "count_days_post_challenge": null,
+          "endpoint": "lice count per fish",
+          "comparator": "non-injected control",
+          "reduction_pct": 4.2,
+          "challenge_study_week": 44,
+          "count_study_week": 51,
+          "timing_uncertainty": "Abstract labels the late challenge 11 months post-prime; Methods says post-boost. Timeline weeks 44 to 51 imply 49 days; Figure 5 says 32 dpc. Retained as unresolved."
+        }
+      ],
+      "sequence_file": null,
+      "sequence_sha256": null,
+      "curation_status": "sequence_pending",
+      "limitations": "One study; chimeric construct does not identify each component's independent efficacy. Late challenge used common-garden design. Challenge time and outcome-count time are different."
+    },
+    {
+      "construct_id": "Rodriguez2025_TT_P0",
+      "study_doi": "10.3389/fimmu.2025.1570948",
+      "source_url": "https://www.frontiersin.org/journals/immunology/articles/10.3389/fimmu.2025.1570948/full",
+      "source_location": "Methods 2.2 refers to prior cloning study; Results 3.3 and Figures 3-5",
+      "species": "lsal",
+      "host": "Salmo salar",
+      "construct_description": "P0 peptide fused to tetanus-toxin-derived T-cell epitopes; exact sequence pending source/supplement curation",
+      "louse_components": [
+        {
+          "name": "P0",
+          "source_accession": "BT077866",
+          "source_region": "exact TT-P0 insert requires original cloning reference",
+          "mapped_accessions": [
+            "XP_040578982.1"
+          ],
+          "mapping_status": "fragment_mapping_pending"
+        }
+      ],
+      "formulation": "100 micrograms per fish; Montanide ISA50 V2; homologous prime-boost in freshwater",
+      "endpoints": [
+        {
+          "challenge_month_post_prime": 2,
+          "count_days_post_challenge": 32,
+          "endpoint": "lice count per fish",
+          "comparator": "non-injected control",
+          "reduction_pct": 88
+        },
+        {
+          "challenge_month_post_prime": 2,
+          "count_days_post_challenge": 32,
+          "endpoint": "lice count per fish",
+          "comparator": "adjuvant control",
+          "reduction_pct": 77
+        },
+        {
+          "challenge_month_post_prime": 5,
+          "count_days_post_challenge": 40,
+          "endpoint": "lice count per fish",
+          "comparator": "non-injected control",
+          "reduction_pct": 90.3
+        },
+        {
+          "challenge_month_post_prime": null,
+          "count_days_post_challenge": null,
+          "endpoint": "lice count per fish",
+          "comparator": "non-injected control",
+          "reduction_pct": 20,
+          "challenge_study_week": 44,
+          "count_study_week": 51,
+          "timing_uncertainty": "Abstract labels the late challenge 11 months post-prime; Methods says post-boost. Timeline weeks 44 to 51 imply 49 days; Figure 5 says 32 dpc. Retained as unresolved."
+        }
+      ],
+      "sequence_file": null,
+      "sequence_sha256": null,
+      "curation_status": "sequence_pending",
+      "limitations": "Same study as P0-my32; not an independent replication. Component recovery is diagnostic, not a full-protein efficacy result."
+    }
+  ]
+}

@@ -1,19 +1,18 @@
-"""Literature triage: the one Claude-judged axis.
+"""Optional model-assisted triage over curated, checksummed source excerpts.
 
-What the model is asked for is a judgment no tool emits as a number -- has
-this protein, or an ortholog of it, been tried as an antigen in any arthropod,
-and what happened. The score comes back with a written justification and
-citations so a human can check the reasoning rather than trust the number.
-
-Blinding matters for the benchmark. If the model can read that P0 was used in
-a vaccine trial, a high score for P0 proves nothing about the rubric. During
-positive-control runs the retrieval excludes vaccine and immunization terms,
-so the ranking has to rest on the deterministic axes alone.
+No sources means no model call. Benchmark scoring excludes this evidence
+entirely; prompt-based redaction is retained only as a presentation helper.
+Returned identifiers must refer to supplied sources, whose claims still need
+human review. Source-ID validation cannot establish entailment on its own.
 """
 
 from __future__ import annotations
 
+import json
+import math
 import re
+from pathlib import Path
+from typing import Any
 
 from .llm import CachedClient
 from .records import LiteratureEvidence, ProteinRecord
@@ -22,6 +21,8 @@ STAGE = "literature"
 
 SYSTEM = """\
 You are assisting a reverse-vaccinology screen of the salmon louse proteome.
+Use ONLY the supplied source excerpts. Do not supply facts or identifiers
+from model memory. Cite only source IDs present in the supplied evidence.
 For one protein, judge how much the published literature supports it as a
 vaccine antigen candidate against a parasitic arthropod.
 
@@ -86,9 +87,7 @@ def redact(text: str, terms: list[str]) -> str:
     return text
 
 
-def build_prompt(
-    record: ProteinRecord, blinded: bool, blinded_terms: list[str]
-) -> str:
+def build_prompt(record: ProteinRecord, blinded: bool, blinded_terms: list[str]) -> str:
     host = record.host_hit
     ortholog = record.best_ortholog()
     description = record.description
@@ -130,8 +129,17 @@ def assess(
     client: CachedClient,
     blinded: bool = False,
     blinded_terms: list[str] | None = None,
+    sources: list[dict[str, Any]] | None = None,
 ) -> ProteinRecord:
-    prompt = build_prompt(record, blinded, blinded_terms or [])
+    record.literature = None
+    if blinded:
+        record.flag("literature_excluded_benchmark")
+        return record
+    if not sources:
+        record.flag("literature_sources_missing")
+        return record
+    prompt = build_prompt(record, False, blinded_terms or [])
+    prompt += "\n\nSource excerpts (cite source_id only):\n" + json.dumps(sources)
     payload = client.complete_json(STAGE, SYSTEM, prompt)
 
     if not payload:
@@ -147,6 +155,17 @@ def assess(
         record.flag("literature_response_malformed")
         return record
 
+    citations = payload.get("citations")
+    allowed = {source["source_id"] for source in sources}
+    if (
+        not math.isfinite(score)
+        or not 0 <= score <= 1
+        or not isinstance(citations, list)
+        or not citations
+        or any(not isinstance(c, str) or c not in allowed for c in citations)
+    ):
+        record.flag("literature_response_unsupported")
+        return record
     record.literature = LiteratureEvidence(
         score=max(0.0, min(1.0, score)),
         justification=str(payload.get("justification", "")).strip(),
@@ -166,6 +185,7 @@ def assess_all(
     client: CachedClient,
     blinded: bool = False,
     blinded_terms: list[str] | None = None,
+    sources_by_protein: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[ProteinRecord]:
     """Triage the whole shortlist, stopping cleanly if the ceiling is hit.
 
@@ -177,9 +197,47 @@ def assess_all(
 
     for index, record in enumerate(records):
         try:
-            assess(record, client, blinded=blinded, blinded_terms=blinded_terms)
+            assess(
+                record,
+                client,
+                blinded=blinded,
+                blinded_terms=blinded_terms,
+                sources=(sources_by_protein or {}).get(record.protein_id),
+            )
         except BudgetExceeded:
             for remaining in records[index:]:
                 remaining.flag("literature_skipped_budget")
             break
     return records
+
+
+def load_sources(paths: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """Read curated excerpts backed by checksummed local source snapshots.
+
+    Retrieval happens before this stage; the packet and source snapshot are
+    independently inspectable and are workflow dependencies.
+    """
+    from .provenance import file_digest
+
+    result: dict[str, list[dict[str, Any]]] = {}
+    for path in paths:
+        for source in json.loads(Path(path).read_text()):
+            snapshot = Path(path).parent / source["snapshot_path"]
+            if (
+                file_digest(snapshot) != source["snapshot_sha256"]
+                or not source["excerpt"]
+                or source["excerpt"] not in snapshot.read_text()
+            ):
+                raise ValueError(
+                    f"Source excerpt/snapshot mismatch: {source['source_id']}"
+                )
+            if not source["url"].startswith("https://") or not source["source_id"]:
+                raise ValueError("Source needs a stable identifier and HTTPS source URL")
+            for pid in source["protein_ids"]:
+                result.setdefault(pid, []).append(
+                    {
+                        k: source[k]
+                        for k in ("source_id", "url", "excerpt", "snapshot_sha256")
+                    }
+                )
+    return result

@@ -1,11 +1,7 @@
-# Scoring weights. These encode a judgment, not a result: durability and
-# functional essentiality outrank predicted immunogenicity, because published
-# sea lice trials show initial titer failing to predict protection and effects
-# decaying between months three and twelve.
-#
-# Re-rank under perturbed weights routinely. If the top ten reshuffles when one
-# weight moves by a few points, that instability is a finding and belongs in
-# the output rather than being smoothed over.
+# Provisional scoring judgments, not measured efficacy or durability predictors.
+# Published construct/adjuvant experiments motivate longitudinal testing but
+# do not establish that these biological axes determine protection duration.
+# Sensitivity thresholds and source removals must be checked before full runs.
 
 weights:
   essentiality: 20
@@ -42,7 +38,7 @@ exposure:
     signal_peptide: 0.85
     gpi_anchored: 0.8
     gut_lumen_facing: 0.9
-    type_I_membrane: 0.7
+    single_pass_membrane: 0.7
     multipass_membrane: 0.5
     nonclassical_secretion: 0.4
 
@@ -54,6 +50,7 @@ epitope:
   count_weight: 0.5
 
 conservation:
+  default_when_missing: 0.4
   # Reciprocal best hit between the two louse species, plus identity held
   # across the epitope-bearing region.
   rbh_bonus: 0.5

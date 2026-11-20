@@ -3,8 +3,8 @@
 The cascade runs once per species; this is what lets the two shortlists be
 intersected afterwards. A protein surviving in both genera is the smaller,
 more interesting set -- conservation across *Lepeophtheirus* and *Caligus* is
-independent evidence of functional essentiality that no single-species screen
-can produce.
+evidence of shared sequence that merits experimental follow-up.
+It does not establish functional essentiality or cross-protection.
 
 Conservation is checked where it has to hold: across the epitope-bearing
 region. Two orthologs at 60% identity overall are no use if every predicted
@@ -44,12 +44,15 @@ def reciprocal_best_hits(
         ]
         if not eligible:
             continue
-        best = max(eligible, key=lambda h: h["bitscore"])
+        best = max(hits, key=lambda h: h["bitscore"])
+        if best not in eligible:
+            continue
         pairs[query] = {
             "subject": best["subject"],
             "identity_pct": best["identity_pct"],
             "evalue": best["evalue"],
             "reciprocal": best_reverse.get(best["subject"]) == query,
+            "alignment_hit": best,
         }
     return pairs
 
@@ -86,7 +89,8 @@ def epitope_region_identity(
         matched += query_sequence[query_index] == subject_sequence[subject_index]
     if compared == 0:
         return None
-    return 100.0 * matched / compared
+    # Unaligned/deleted epitope residues count as nonmatches.
+    return 100.0 * matched / len(epitope_positions)
 
 
 def attach_orthologs(
@@ -102,13 +106,23 @@ def attach_orthologs(
         if record is None:
             continue
         region_identity = None
-        if other_sequences and alignments:
+        coverage = None
+        alignment = (alignments or {}).get(protein_id)
+        hit = pair.get("alignment_hit", {})
+        if alignment is None and hit.get("qseq") and hit.get("sseq"):
+            alignment = alignment_positions(hit)
+        if other_sequences and alignment is not None:
             region_identity = epitope_region_identity(
                 record.sequence,
                 other_sequences.get(pair["subject"], ""),
-                record.epitopes,
-                alignments.get(protein_id),
+                record.accessible_epitopes(),
+                alignment,
             )
+            positions = {
+                p for e in record.accessible_epitopes() for p in range(e.start - 1, e.end)
+            }
+            covered = {q for q, _ in alignment} & positions
+            coverage = len(covered) / len(positions) if positions else None
         record.orthologs.append(
             Ortholog(
                 species=other_species,
@@ -117,6 +131,7 @@ def attach_orthologs(
                 evalue=pair["evalue"],
                 reciprocal_best=pair["reciprocal"],
                 epitope_region_identity_pct=region_identity,
+                epitope_region_coverage=coverage,
             )
         )
         if (
@@ -129,6 +144,7 @@ def attach_orthologs(
 def intersect_shortlists(
     shortlist_a: list[ProteinRecord],
     shortlist_b: list[ProteinRecord],
+    cfg: dict[str, Any] | None = None,
 ) -> list[tuple[ProteinRecord, ProteinRecord]]:
     """Candidates that survived the cascade in both species.
 
@@ -136,14 +152,53 @@ def intersect_shortlists(
     annotation names across these two genomes are not reliable enough to join
     on, and a wrong join here would be invisible downstream.
     """
-    by_id_b = {record.protein_id: record for record in shortlist_b}
+    cfg = cfg or {}
+    minimum = cfg.get("epitope_region_min_identity_pct", 50.0)
+    coverage = cfg.get("epitope_region_min_coverage", 0.8)
+
+    def supported(o: Ortholog) -> bool:
+        return (
+            o.reciprocal_best
+            and o.epitope_region_identity_pct is not None
+            and o.epitope_region_identity_pct >= minimum
+            and o.epitope_region_coverage is not None
+            and o.epitope_region_coverage >= coverage
+        )
+
+    by_id_b = {(record.species, record.protein_id): record for record in shortlist_b}
+    for record in [*shortlist_a, *shortlist_b]:
+        record.flags = [f for f in record.flags if f != "cross_species_candidate"]
     out: list[tuple[ProteinRecord, ProteinRecord]] = []
     for record in shortlist_a:
         for ortholog in record.orthologs:
-            partner = by_id_b.get(ortholog.protein_id)
-            if partner is not None:
+            partner = by_id_b.get((ortholog.species, ortholog.protein_id))
+            reverse = partner.best_ortholog(record.species) if partner else None
+            if (
+                partner is not None
+                and supported(ortholog)
+                and reverse is not None
+                and reverse.protein_id == record.protein_id
+                and supported(reverse)
+            ):
                 record.flag("cross_species_candidate")
                 partner.flag("cross_species_candidate")
                 out.append((record, partner))
                 break
     return out
+
+
+def alignment_positions(hit: dict[str, Any]) -> list[tuple[int, int]]:
+    """Map the gapped DIAMOND qseq/sseq columns to zero-based coordinates."""
+    qseq, sseq = hit["qseq"], hit["sseq"]
+    if len(qseq) != len(sseq):
+        raise ValueError("Unequal gapped alignment lengths")
+    q, s = hit["qstart"] - 1, hit["sstart"] - 1
+    pairs = []
+    for qa, sa in zip(qseq, sseq, strict=True):
+        if qa != "-" and sa != "-":
+            pairs.append((q, s))
+        q += qa != "-"
+        s += sa != "-"
+    if q != hit["qend"] or s != hit["send"]:
+        raise ValueError("Alignment sequence does not match reported coordinates")
+    return pairs

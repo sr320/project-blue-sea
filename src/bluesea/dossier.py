@@ -17,6 +17,30 @@ from .records import ProteinRecord
 from .scoring import CRITERIA
 
 FLAG_NOTES = {
+    "antibody_access_unconfirmed": (
+        "Secretion/topology is predicted. Tissue localization and contact with "
+        "host antibody have not been established; O can include organelle lumens."
+    ),
+    "short_host_similar_patch": (
+        "A short high-identity host alignment needs epitope-level review. The "
+        "whole-query coverage heuristic did not exclude this patch."
+    ),
+    "weak_predicted_epitope_support": (
+        "Few predicted accessible linear patches. Prediction is advisory; "
+        "confirm binding experimentally with salmon antibodies."
+    ),
+    "epitope_accessibility_unknown": (
+        "Residue topology is missing; epitope access is unknown."
+    ),
+    "expression_partial_coverage": "Some species-valid life stages were not assayed.",
+    "expression_insufficient_stages": "Too few stages were assayed to test breadth.",
+    "orthology_not_detected": "No qualifying cross-species match was detected.",
+    "literature_sources_missing": (
+        "No curated source packet; no model assessment was made."
+    ),
+    "literature_response_unsupported": (
+        "The model returned unsupported citations or scores."
+    ),
     "essentiality_unknown": (
         "No RNAi knockdown has been reported. RNAi coverage of this genome is "
         "partial, so this is absence of evidence, not evidence that the gene "
@@ -30,7 +54,7 @@ FLAG_NOTES = {
     "epitope_prediction_mammal_calibrated": (
         "B-cell epitope predictors are trained largely on human and mouse data. "
         "Salmon IgM/IgT recognition differs, so treat the epitope map as weak "
-        "evidence and confirm by immunohistochemistry."
+        "evidence and test binding using salmon antibodies."
     ),
     "epitopes_not_conserved_across_species": (
         "The ortholog is conserved overall but the predicted epitopes are not, "
@@ -55,8 +79,8 @@ FLAG_NOTES = {
     ),
     "literature_skipped_budget": "Literature triage halted at its spend ceiling.",
     "cross_species_candidate": (
-        "Survived the cascade in both louse species -- the strongest "
-        "independent evidence of functional essentiality this screen produces."
+        "Reciprocal matches survive in both species with measured epitope "
+        "conservation. Shared efficacy and essentiality remain untested."
     ),
     "single_source_dependent": (
         "Top-tier rank depends on one evidence source. Fragile: a change in "
@@ -65,20 +89,28 @@ FLAG_NOTES = {
 }
 
 
-def construct_boundary(record: ProteinRecord) -> tuple[int, int]:
-    """Suggested construct limits: mature protein, extracellular part only.
-
-    Starts after the predicted signal peptide and, for membrane proteins,
-    stops before the first transmembrane segment. This is a starting point for
-    cloning, not a validated boundary.
-    """
-    start = 1
-    if record.topology.has_signal_peptide:
-        start = 26   # typical eukaryotic signal peptide; refine from SignalP CS
-    end = record.length
-    if record.topology.n_transmembrane >= 1 and record.epitopes:
-        end = min(record.length, max(e.end for e in record.epitopes) + 20)
-    return start, end
+def construct_boundary(record: ProteinRecord) -> tuple[int, int] | None:
+    """Suggest only an epitope-bearing, contiguous predicted outside domain."""
+    topology = record.topology.topology_string
+    if not topology or len(topology) != record.length:
+        return None
+    cleavage = record.topology.signal_peptide_end
+    if record.topology.has_signal_peptide and cleavage is None and "S" not in topology:
+        return None
+    regions = []
+    start = None
+    for index, label in enumerate(topology + "I", start=1):
+        if label == "O" and start is None:
+            start = index
+        if label != "O" and start is not None:
+            end = index - 1
+            start = max(start, (cleavage or 0) + 1)
+            if any(
+                start <= e.start <= e.end <= end for e in record.accessible_epitopes()
+            ):
+                regions.append((start, end))
+            start = None
+    return max(regions, key=lambda r: r[1] - r[0], default=None)
 
 
 def render(
@@ -149,11 +181,15 @@ def render(
     else:
         add("No epitopes predicted above threshold.")
     add("")
-    start, end = construct_boundary(record)
-    add(
-        f"**Suggested construct**: residues {start}–{end} "
-        "(starting point, not validated)."
-    )
+    boundary = construct_boundary(record)
+    if boundary:
+        start, end = boundary
+        add(
+            f"**Suggested construct**: residues {start}–{end} "
+            "(predicted outside domain; validate localization and folding)."
+        )
+    else:
+        add("**Suggested construct**: withheld; no supported epitope-bearing domain.")
     add("")
 
     add("## Expression across life stages")

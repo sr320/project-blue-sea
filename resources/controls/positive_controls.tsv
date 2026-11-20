@@ -1,35 +1,4 @@
-# Antigens with measurable effects in published trials. These must surface in
-# the top tier on deterministic evidence alone, which is why the literature
-# stage is blinded for this run.
-#
-# protein_id values are accessions in GCF_016086655.4 (UVic_Lsal_1.4). They
-# were established by aligning a UniProt reference for each antigen against
-# that proteome -- not by matching annotation text, which does not work here:
-# RefSeq names P0 "large ribosomal subunit protein uL10", so no search for
-# "P0" finds it, and two unrelated proteins are both called "peroxiredoxin 2".
-# Reproduce with scripts/map_controls.py.
-#
-# identity_pct and coverage describe the alignment to mapped_from. Rows
-# commented out below could not be mapped; they are excluded rather than
-# guessed, so the gate measures only controls that actually resolve.
-protein_id	gene_symbol	isoforms	mapped_from	identity_pct	coverage	rationale	reference
-XP_040578982.1	P0		C1BTD7	99.7	1.00	Ribosomal P0; chimeric TT-P0 and P0-my32 constructs reduced lice 88-91% at 2-3 months, decaying to 20% and ~4% by 11 months	PMC12133460
-XP_040572108.1	my32	XP_071746275.1;XP_071746276.1;XP_071746277.1	D3PIL3	99.4	1.00	akirin/subolesin homolog; component of the P0-my32 chimera. Three isoforms align equally well (XP_071746275.1, XP_071746276.1, XP_071746277.1)	PMC12133460
-XP_040572709.1	prx2		C1BU78	100.0	1.00	Peroxiredoxin-2 peptide; tested as a sea lice antigen. Alignment distinguishes it from XP_040565186.1, which RefSeq also names "peroxiredoxin 2" but matches at only 65%	frontiersin 2025 review
-XP_040566588.1	hpx2	XP_040566589.1	annotation	NA	NA	Salmon louse heme peroxidase 2; mapped by RefSeq annotation name, which is unique in this proteome. Isoform X2 is XP_040566589.1	doi:10.1016/j.fsi.2023
-XP_040566305.1	tlr6		annotation	NA	NA	TLR-6; tested in published sea lice vaccine work. Sole "toll-like receptor 6" in this proteome	frontiersin 2025 review
-#
-# UNMAPPED -- do not uncomment without establishing the accession first.
-#
-# bm86-like: no confident ortholog in GCF_016086655.4. The best alignment to
-#   the canonical Bm86 (UniProt P20736, R. microplus) is 28.8% identity over
-#   79% coverage, to "protein crumbs" -- twilight-zone similarity between two
-#   EGF-repeat proteins, not orthology. Whether L. salmonis has a Bm86
-#   ortholog at all is a real question, and answering it needs a phylogenetic
-#   analysis rather than a best-hit search.
-# hpx1: no "heme peroxidase 1" exists in this proteome or in UniProt for this
-#   species; only hpx2. Check whether the source paper's hpx1 corresponds to a
-#   gene model under a different name.
-# kcc-transporter: "potassium chloride and amino acid transporter" matches 84
-#   transporters by name and has no UniProt reference for this species. Needs
-#   the sequence from the source paper.
+# Standalone protein positives require an exact primary reference, construct
+# sequence and mapping. The former entries are retained for curation in
+# legacy_candidate_controls.tsv; none currently meets this standard.
+protein_id	gene_symbol	isoforms	reference	sequence_file	sequence_sha256

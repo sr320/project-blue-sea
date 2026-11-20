@@ -60,7 +60,7 @@ def test_membrane_protein_with_large_ectodomain_passes_exposure(config):
     record = make_record("LSAL_TM", signal_peptide=False, n_transmembrane=1)
     run_cascade(record, config["cascade"])
     assert record.survived
-    assert record.topology.exposure_class == "type_I_membrane"
+    assert record.topology.exposure_class == "single_pass_membrane"
 
 
 def test_missing_expression_data_does_not_exclude(config):

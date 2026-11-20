@@ -17,6 +17,6 @@ dependencies:
   - gtdbtk=2.4.0
   - pip:
       - anthropic==0.40.0
-      # SignalP 6 and DeepTMHMM are licence-restricted and are not installable
-      # from conda. Install them into the container at build time from the
-      # DTU download, or run them through biolib; see docs/tools.md.
+      # Optional predictor environments and licensed tools are installed by
+      # workflow/predictors/install.sh. The base image does not contain them.
+      # See docs/tools.md; no BioLib cloud execution is used on compute nodes.
