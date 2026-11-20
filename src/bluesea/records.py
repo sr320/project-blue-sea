@@ -106,6 +106,9 @@ class ProteinRecord:
     species: str
     sequence: str
     description: str = ""
+    # The readable gene name where the annotation has one, kept beside the
+    # stable gene_id because evidence tables may be keyed on either.
+    gene_symbol: str = ""
 
     topology: Topology = field(default_factory=Topology)
     epitopes: list[Epitope] = field(default_factory=list)

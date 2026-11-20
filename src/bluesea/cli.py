@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -76,13 +77,33 @@ def cmd_prefilter(args: argparse.Namespace) -> int:
     secretome = _read_id_list(scratch / "secretome_confirmed.txt")
     gpi = _read_id_list(scratch / "gpi_anchored.txt")
 
+    # The GFF is the only authoritative protein-to-gene link; NCBI protein
+    # FASTA headers carry no gene tag, so without it every protein looks like
+    # its own gene and nothing keyed on genes can join.
+    gene_map: dict[str, tuple[str, str]] = {}
+    gff = species_cfg.get("gff")
+    if gff and (reference / gff).exists():
+        gene_map = io.read_protein_gene_map(reference / gff)
+        print(f"gene map: {len(gene_map)} proteins from {gff}")
+    else:
+        print(
+            f"WARNING: no GFF for {args.species}; gene ids fall back to protein "
+            f"accessions and gene-keyed evidence will not join. See "
+            f"docs/reference-data.md.",
+            file=sys.stderr,
+        )
+
     records = []
     for protein_id, description, sequence in io.read_fasta(
         reference / species_cfg["proteome"]
     ):
+        gene_id, gene_symbol = gene_map.get(
+            protein_id, (_gene_of(protein_id, description), "")
+        )
         record = ProteinRecord(
             protein_id=protein_id,
-            gene_id=_gene_of(protein_id, description),
+            gene_id=gene_id,
+            gene_symbol=gene_symbol,
             species=args.species,
             sequence=sequence,
             description=description,
@@ -177,6 +198,7 @@ def cmd_assemble(args: argparse.Namespace) -> int:
     enabled = config["cascade"].get("prefilter", {}).get("enabled", True)
 
     enriched = joined_expression = joined_rnai = 0
+    key_hits: Counter[str] = Counter()
     for record in records:
         if enabled and not record.survived:
             continue
@@ -184,13 +206,20 @@ def cmd_assemble(args: argparse.Namespace) -> int:
         record.host_hit = io.best_host_hit(
             host_hits.get(record.protein_id, []), record.length
         )
-        record.expression = expression.get(record.gene_id, {})
-        joined_expression += bool(record.expression)
-        if record.gene_id in rnai:
-            record.rnai.phenotype = rnai[record.gene_id]["phenotype"]
-            record.rnai.source = rnai[record.gene_id]["source"]
-            record.rnai.note = rnai[record.gene_id]["note"]
+
+        value, key = _lookup_by_gene(expression, record)
+        record.expression = value or {}
+        if value is not None:
+            joined_expression += 1
+            key_hits[f"expression:{key}"] += 1
+
+        value, key = _lookup_by_gene(rnai, record)
+        if value is not None:
+            record.rnai.phenotype = value["phenotype"]
+            record.rnai.source = value["source"]
+            record.rnai.note = value["note"]
             joined_rnai += 1
+            key_hits[f"rnai:{key}"] += 1
         enriched += 1
 
     out = _records_path(paths, args.species, "assembled")
@@ -200,7 +229,47 @@ def cmd_assemble(args: argparse.Namespace) -> int:
         enriched,
         [("expression", expression, joined_expression), ("rnai", rnai, joined_rnai)],
     )
+    for label, count in sorted(key_hits.items()):
+        # Which key form carried the join: a table joining only on protein_id
+        # is keyed per isoform, not per gene, and will miss siblings.
+        print(f"  joined via {label}: {count}")
     return 0
+
+
+def _gene_keys(record: ProteinRecord) -> list[tuple[str, str]]:
+    """(label, key) pairs to try when joining gene-keyed evidence.
+
+    Which of these the expression and RNAi tables use is not knowable from
+    here -- they come from LiceBase and the literature, not from the assembly
+    -- so rather than guess one, try the few forms that exist and report which
+    one matched. Most specific first.
+    """
+    keys: list[tuple[str, str]] = []
+    if record.gene_id:
+        keys.append(("gene_id", record.gene_id))
+        if record.gene_id.startswith("GeneID:"):
+            # Tables that carry the bare NCBI number rather than the prefixed
+            # form are common enough to be worth one extra lookup.
+            keys.append(("geneid_number", record.gene_id.split(":", 1)[1]))
+    if record.gene_symbol:
+        keys.append(("gene_symbol", record.gene_symbol))
+    keys.append(("protein_id", record.protein_id))
+
+    seen, unique = set(), []
+    for label, key in keys:
+        if key not in seen:
+            seen.add(key)
+            unique.append((label, key))
+    return unique
+
+
+def _lookup_by_gene(
+    table: dict[str, Any], record: ProteinRecord
+) -> tuple[Any, str]:
+    for label, key in _gene_keys(record):
+        if key in table:
+            return table[key], label
+    return None, ""
 
 
 def _report_joins(
