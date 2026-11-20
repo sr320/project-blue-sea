@@ -16,9 +16,23 @@ timing, sequence file/checksum and curation status.
 
 The current entries describe TT-P0 and P0-my32 from one primary study.
 They are diagnostic and pending exact sequence/fragment mapping. Both share
-P0 and the study; they are not independent positive protein controls. The
-late endpoint's timing conflicts between the paper's timeline and figure
-caption and is explicitly unresolved rather than assigned an invented dpc.
+P0 and the study; they are not independent positive protein controls.
+
+That study prints no construct sequence: only PCR primers, and MS/MS identity
+confirmations rather than sequences. So both records stay `sequence_pending`
+on evidence, not on unfinished reading. Each carries its design references,
+expression details, cloning primers with restriction sites, and a blockers
+and next-steps list naming what would actually close it.
+
+Study-level facts shared by both constructs live under `studies`, keyed by
+DOI: the timeline in study weeks and the unresolved timing conflicts. Two are
+recorded. The reported "2, 5, 11 months" labels match no challenge date under
+either the prime or the boost anchor, and Figure 5's 32 dpc contradicts the
+week 44-to-51 interval. Arithmetic that would explain each is recorded as a
+derived hypothesis, marked as not stated by the paper, and is not used to
+populate any field. Endpoints carry their comparator, p-value and the section
+they came from; one abstract-only figure with no Results counterpart is
+labelled as such rather than promoted to a result.
 
 Before marking a construct verified:
 

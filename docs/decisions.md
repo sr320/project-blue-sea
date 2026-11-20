@@ -2,12 +2,30 @@
 
 - [ ] Provision licensed local SignalP/DeepTMHMM and BepiPred/ESM weights,
       document versions, configure required files, and run the real control pilot.
-- [ ] Curate exact administered TT-P0 and P0-my32 sequences and fragment mappings.
-      Their registry records remain pending; the source has conflicting late
-      challenge timing that needs resolution.
+- [ ] Assemble the administered TT-P0 sequence. Leal et al. 2019
+      (doi 10.1016/j.fsi.2019.06.018) has been read and supplied both T-cell
+      epitopes verbatim, the fusion orientation, the vector and the strain,
+      and it confirms the P0 peptide is aa 267-301 of BT077866 for TT-P0 too.
+      What remains is the linker and His-tag residues, which neither paper
+      states, and the P0 35-mer itself. Only the submitted manuscript was
+      readable; its restriction-site assignment is internally inconsistent,
+      so the published version is still worth obtaining.
+- [ ] Map the P0-my32 fragments. The P0 peptide is aa 267-301 of BT077866 and
+      the cloning primers for both fragments are recorded, so the coordinates
+      can be fixed by alignment without waiting on correspondence.
+- [ ] Resolve two timing conflicts in the 2025 study, both recorded unresolved:
+      the "2, 5, 11 months" labels match no challenge date under either the
+      prime or the boost anchor, and Figure 5's 32 dpc contradicts the week
+      44-to-51 interval. Arithmetic hypotheses are recorded but not applied.
 - [ ] Add independent primary benchmark studies with traceable constructs,
       comparators and endpoints. Multiple constructs in one study are not
-      independent replications.
+      independent replications. Two unassessed leads: Swain et al. 2020
+      (doi 10.1371/journal.pone.0239827), and Carpio et al., "Novel chimeric
+      antigen reduced adult sea louse Lepeophtheirus salmonis infestations
+      under different prime-boost vaccination strategies", cited as submitted
+      to Scientific Reports in 2018 and not yet located in published form.
+      Leal et al. 2019 does *not* qualify: it measures IgM titers only, with
+      no challenge or infestation endpoint, and the registry records that.
 - [ ] Decide how to handle experimental components rejected by exposure using
       localization evidence. Do not change the policy solely to recover controls.
 - [ ] Supply curated stage TPM/RNAi tables keyed to the configured annotation.
