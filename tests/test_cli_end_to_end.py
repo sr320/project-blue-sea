@@ -24,10 +24,10 @@ PROTEOME = [
     ("LSAL_HPX1", True, 0, 33.0, 5, "untested", True),
     ("LSAL_NOVEL1", True, 0, 19.0, 4, "untested", True),
     ("LSAL_NOVEL2", True, 2, 25.0, 3, "moulting_defect", True),
-    ("LSAL_RPL7", False, 0, 35.0, 4, "lethal", True),        # intracellular
-    ("SSAL_ACTB", True, 0, 97.0, 5, "untested", True),       # host-identical
-    ("LSAL_SHORT", True, 0, 20.0, 3, "untested", True),      # too short
-    ("LSAL_SILENT", True, 0, 22.0, 4, "untested", False),    # not expressed
+    ("LSAL_RPL7", False, 0, 35.0, 4, "lethal", True),  # intracellular
+    ("SSAL_ACTB", True, 0, 97.0, 5, "untested", True),  # host-identical
+    ("LSAL_SHORT", True, 0, 20.0, 3, "untested", True),  # too short
+    ("LSAL_SILENT", True, 0, 22.0, 4, "untested", False),  # not expressed
 ]
 
 STAGES = ["copepodid", "chalimus_I", "preadult_I", "adult_female"]
@@ -51,8 +51,8 @@ def workspace(tmp_path: Path, config: dict) -> Path:
         fasta.append(f">{pid} [gene={pid}_g] test protein\n{sequence}")
 
         signalp.append(
-            f"{pid}\t{'SP' if sp else 'OTHER'}\t{0.96 if sp else 0.02}\t"
-            f"{0.04 if sp else 0.98}"
+            f"{pid}\t{'SP' if sp else 'OTHER'}\t{0.04 if sp else 0.98}\t"
+            f"{0.96 if sp else 0.02}"
         )
         # 3-line DeepTMHMM: header, sequence, topology string.
         inside = "I" * (length - 40 * n_tm - (10 if sp else 0))
@@ -75,6 +75,7 @@ def workspace(tmp_path: Path, config: dict) -> Path:
         expression.append(f"{pid}_g\t" + "\t".join(str(v) for v in tpm))
         rnai.append(f"{pid}_g\t{phenotype}\tLiceBase\t")
 
+    (scratch / "screen.faa").write_text("\n".join(fasta) + "\n")
     (reference / "proteins.faa").write_text("\n".join(fasta) + "\n")
     (reference / "stage_tpm.tsv").write_text(
         "gene_id\t" + "\t".join(STAGES) + "\n" + "\n".join(expression) + "\n"
@@ -93,13 +94,28 @@ def workspace(tmp_path: Path, config: dict) -> Path:
     # its own unit tests.
     local = dict(config)
     local["workdir"] = str(tmp_path)
-    local["species"] = {"lsal": config["species"]["lsal"]}
+    local["paths"] = {
+        **config["paths"],
+        "scratch": "scratch",
+        "results": "results",
+        "logs": "logs",
+    }
+    local["species"] = {
+        "lsal": {
+            **config["species"]["lsal"],
+            "expression": "lsal/stage_tpm.tsv",
+            "rnai": "lsal/rnai_phenotypes.tsv",
+            "life_stages": STAGES,
+        }
+    }
     local["life_stages"] = STAGES
     local["validation"] = {
         **config["validation"],
         "positive_controls": str(tmp_path / "positive.tsv"),
         "negative_controls": str(tmp_path / "negative.tsv"),
         "random_control_n": 2,
+        "construct_controls": None,
+        "require_host_spikes": False,
         "min_positive_controls_in_top_tier": 0.5,
         "top_tier_fraction": 0.5,
         "robustness": {**config["validation"]["robustness"], "n_perturbations": 5},
@@ -135,6 +151,7 @@ def test_pipeline_runs_end_to_end(workspace: Path, capsys):
     assert run(workspace, "prefilter", "--species", "lsal") == 0
     assert run(workspace, "assemble", "--species", "lsal") == 0
     assert run(workspace, "cascade", "--species", "lsal") == 0
+    assert run(workspace, "orthology") == 0
     # Dry run: no API key, no network, no spend.
     assert run(workspace, "literature", "--species", "lsal") == 0
     assert run(workspace, "rank") == 0
@@ -147,9 +164,9 @@ def test_pipeline_runs_end_to_end(workspace: Path, capsys):
 
     survivors = {row.split("\t")[1] for row in rows}
     assert "LSAL_P0" in survivors
-    assert "SSAL_ACTB" not in survivors    # host-identical
-    assert "LSAL_RPL7" not in survivors    # intracellular
-    assert "LSAL_SHORT" not in survivors   # below length floor
+    assert "SSAL_ACTB" not in survivors  # host-identical
+    assert "LSAL_RPL7" not in survivors  # intracellular
+    assert "LSAL_SHORT" not in survivors  # below length floor
     assert "LSAL_SILENT" not in survivors  # not expressed
 
     dossiers = sorted((results / "dossiers").glob("*.md"))
@@ -157,7 +174,7 @@ def test_pipeline_runs_end_to_end(workspace: Path, capsys):
     text = dossiers[0].read_text()
     assert "## Scores" in text
     assert "## Why it survived" in text
-    assert "challenge trial" in text   # the standing caveat
+    assert "challenge trial" in text  # the standing caveat
 
 
 def test_cascade_audit_traces_every_drop(workspace: Path):
@@ -189,8 +206,8 @@ def test_prefilter_forwards_only_reachable_proteins(workspace: Path):
     forwarded = {
         line[1:].split()[0] for line in candidates.splitlines() if line.startswith(">")
     }
-    assert "LSAL_RPL7" not in forwarded     # intracellular: no route to antibody
-    assert "LSAL_SHORT" not in forwarded    # below the length floor
+    assert "LSAL_RPL7" not in forwarded  # intracellular: no route to antibody
+    assert "LSAL_SHORT" not in forwarded  # below the length floor
     assert "LSAL_P0" in forwarded
     # Still judged on cross-reactivity, so it has to reach the salmon search.
     assert "SSAL_ACTB" in forwarded
@@ -258,9 +275,11 @@ def test_isoforms_column_is_optional(config):
 
     assert _control_accessions({"protein_id": "XP_1"}) == {"XP_1"}
     assert _control_accessions({"protein_id": "XP_1", "isoforms": ""}) == {"XP_1"}
-    assert _control_accessions(
-        {"protein_id": "XP_1", "isoforms": "XP_2; XP_3"}
-    ) == {"XP_1", "XP_2", "XP_3"}
+    assert _control_accessions({"protein_id": "XP_1", "isoforms": "XP_2; XP_3"}) == {
+        "XP_1",
+        "XP_2",
+        "XP_3",
+    }
 
 
 def test_a_broken_gene_join_is_loud(capsys):
@@ -299,12 +318,14 @@ def test_dry_run_reports_projected_spend_without_calling(workspace: Path, capsys
     run(workspace, "prefilter", "--species", "lsal")
     run(workspace, "assemble", "--species", "lsal")
     run(workspace, "cascade", "--species", "lsal")
+    run(workspace, "orthology")
     run(workspace, "literature", "--species", "lsal")
 
     report = json.loads((workspace / "logs" / "llm_usage_lsal.json").read_text())
     assert report["dry_run"] is True
-    assert report["stages"]["literature"]["calls"] > 0
-    assert report["total_cost_usd"] > 0
+    assert report["total_cost_usd"] == 0
+    assessed = json.loads((workspace / "scratch" / "lsal" / "assessed.json").read_text())
+    assert all("literature_sources_missing" in r["flags"] for r in assessed)
     # Nothing was cached, because nothing was called.
     assert not list((workspace / "cache" / "llm").rglob("*.json"))
 
@@ -313,6 +334,7 @@ def test_benchmark_gate_reports_a_verdict(workspace: Path):
     run(workspace, "prefilter", "--species", "lsal")
     run(workspace, "assemble", "--species", "lsal")
     run(workspace, "cascade", "--species", "lsal")
+    run(workspace, "orthology")
     exit_code = run(workspace, "benchmark")
 
     report = json.loads((workspace / "results" / "benchmark.json").read_text())
@@ -320,3 +342,10 @@ def test_benchmark_gate_reports_a_verdict(workspace: Path):
     assert report["positive_controls"]["n_controls"] == 1
     # Exit code is the gate: non-zero stops the workflow before the full run.
     assert exit_code == (0 if report["gate_passed"] else 1)
+
+
+def test_configured_evidence_with_no_gene_matches_fails(workspace: Path):
+    run(workspace, "prefilter", "--species", "lsal")
+    path = workspace / "resources/reference/lsal/stage_tpm.tsv"
+    path.write_text("gene_id\tcopepodid\nUNKNOWN_GENE\t5\n")
+    assert run(workspace, "assemble", "--species", "lsal") == 1

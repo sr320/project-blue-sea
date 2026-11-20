@@ -18,7 +18,7 @@ class Epitope:
     start: int
     end: int
     score: float
-    kind: str = "linear"          # linear | conformational
+    kind: str = "linear"  # linear | conformational
     sequence: str = ""
 
     @property
@@ -45,10 +45,13 @@ class Ortholog:
     evalue: float
     reciprocal_best: bool = False
     epitope_region_identity_pct: float | None = None
+    epitope_region_coverage: float | None = None
 
 
 @dataclass
 class Topology:
+    topology_string: str = ""
+    signal_peptide_end: int | None = None
     has_signal_peptide: bool = False
     signalp_prob: float = 0.0
     n_transmembrane: int = 0
@@ -75,7 +78,7 @@ class Topology:
         if self.gpi_anchored:
             return "gpi_anchored"
         if self.n_transmembrane == 1:
-            return "type_I_membrane"
+            return "single_pass_membrane"
         if self.n_transmembrane > 1:
             return "multipass_membrane"
         if self.nonclassical_secretion:
@@ -113,12 +116,17 @@ class ProteinRecord:
     topology: Topology = field(default_factory=Topology)
     epitopes: list[Epitope] = field(default_factory=list)
     host_hit: HostHit | None = None
+    host_hits: list[HostHit] = field(default_factory=list)
     orthologs: list[Ortholog] = field(default_factory=list)
     rnai: RNAiEvidence = field(default_factory=RNAiEvidence)
     literature: LiteratureEvidence | None = None
 
     # gene_id -> TPM per life stage; absent stages mean "not assayed".
     expression: dict[str, float] = field(default_factory=dict)
+    assayed_stages: list[str] = field(default_factory=list)
+    expected_stages: list[str] = field(default_factory=list)
+    early_stages: list[str] = field(default_factory=list)
+    benchmark_only: bool = False
 
     n_disulfide_pairs: int = 0
     n_glycosylation_sites: int = 0
@@ -154,6 +162,27 @@ class ProteinRecord:
         if name not in self.flags:
             self.flags.append(name)
 
+    def accessible_epitopes(self) -> list[Epitope]:
+        """Predicted linear epitopes wholly on the non-cytoplasmic side.
+
+        O is a topology label, not evidence of tissue-level antibody access.
+        Legacy records without residue topology retain evidence with a flag.
+        """
+        topology = self.topology.topology_string
+        if not topology:
+            self.flag("epitope_accessibility_unknown")
+        return [
+            e
+            for e in self.epitopes
+            if e.kind == "linear"
+            and 1 <= e.start <= e.end <= self.length
+            and (
+                self.topology.signal_peptide_end is None
+                or e.start > self.topology.signal_peptide_end
+            )
+            and (not topology or set(topology[e.start - 1 : e.end]) == {"O"})
+        ]
+
     def best_ortholog(self, species: str | None = None) -> Ortholog | None:
         candidates = [
             o for o in self.orthologs if species is None or o.species == species
@@ -176,6 +205,7 @@ def from_dict(payload: dict[str, Any]) -> ProteinRecord:
     payload["epitopes"] = [Epitope(**e) for e in payload.get("epitopes", [])]
     payload["orthologs"] = [Ortholog(**o) for o in payload.get("orthologs", [])]
     payload["rnai"] = RNAiEvidence(**(payload.get("rnai") or {}))
+    payload["host_hits"] = [HostHit(**h) for h in payload.get("host_hits", [])]
     host_hit = payload.get("host_hit")
     payload["host_hit"] = HostHit(**host_hit) if host_hit else None
     literature = payload.get("literature")

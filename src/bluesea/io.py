@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import csv
 import gzip
+import math
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -64,50 +66,47 @@ def read_tsv(path: str | Path) -> Iterator[dict[str, str]]:
 
 
 def read_signalp(path: str | Path) -> dict[str, dict[str, Any]]:
-    """SignalP 6 summary table: ID, Prediction, probabilities, CS position."""
-    out: dict[str, dict[str, Any]] = {}
-    with _open(path) as handle:
-        for line in handle:
-            if line.startswith("#") or not line.strip():
-                continue
-            fields = line.rstrip("\n").split("\t")
-            if len(fields) < 3:
-                continue
-            protein_id, prediction = fields[0], fields[1]
-            # Column layout varies with the model used; the signal probability
-            # is the largest non-"OTHER" probability in the numeric columns.
-            probs = [_maybe_float(f) for f in fields[2:]]
-            probs = [p for p in probs if p is not None]
-            out[protein_id] = {
-                "prediction": prediction,
-                "probability": max(probs) if prediction != "OTHER" and probs else 0.0,
-            }
+    """SignalP 6 eukaryotic summary: ID, Prediction, OTHER, SP, CS Position."""
+    out = {}
+    for fields in _iter_rows(path):
+        if len(fields) < 4:
+            raise ValueError(f"Malformed SignalP row: {fields}")
+        pid, prediction = fields[:2]
+        if pid in out or prediction not in {"OTHER", "SP"}:
+            raise ValueError(f"Duplicate ID or unsupported SignalP class: {pid}")
+        probability = float(fields[3])
+        if not 0 <= probability <= 1:
+            raise ValueError(f"Invalid SignalP probability for {pid}")
+        cleavage = re.search(r"CS pos:\s*(\d+)-", " ".join(fields[4:]))
+        out[pid] = {
+            "prediction": prediction,
+            "probability": probability,
+            "signal_peptide_end": int(cleavage[1]) if cleavage else None,
+        }
     return out
 
 
 def read_deeptmhmm(path: str | Path) -> dict[str, dict[str, Any]]:
-    """DeepTMHMM 3-line output: per-residue topology string per protein.
-
-    Labels: S signal, M transmembrane, I inside (cytoplasmic), O outside,
-    B beta-barrel. The outside count is what the exposure filter cares about.
-    """
-    out: dict[str, dict[str, Any]] = {}
-    protein_id: str | None = None
+    """Strict DeepTMHMM 1 three-line parser; preserves residue coordinates."""
     with _open(path) as handle:
-        lines = [ln.rstrip("\n") for ln in handle if ln.strip()]
-    for _index, line in enumerate(lines):
-        if line.startswith(">"):
-            protein_id = line[1:].split("|")[0].split()[0]
-            continue
-        if protein_id is None or set(line) - set("SMIOB"):
-            continue
-        out[protein_id] = {
-            "topology_string": line,
-            "n_transmembrane": _count_runs(line, "M") + _count_runs(line, "B"),
-            "extracellular_aa": line.count("O"),
-            "has_signal": "S" in line,
+        lines = [line.strip() for line in handle if line.strip()]
+    if len(lines) % 3:
+        raise ValueError("DeepTMHMM output must contain complete three-line records")
+    out = {}
+    for index in range(0, len(lines), 3):
+        header, sequence, topology = lines[index : index + 3]
+        if not header.startswith(">") or len(sequence) != len(topology):
+            raise ValueError(f"Malformed DeepTMHMM record at line {index + 1}")
+        pid = header[1:].split()[0]
+        if pid in out or set(topology) - set("SMIOB"):
+            raise ValueError(f"Duplicate ID or unknown topology labels: {pid}")
+        out[pid] = {
+            "sequence": sequence,
+            "topology_string": topology,
+            "n_transmembrane": _count_runs(topology, "M") + _count_runs(topology, "B"),
+            "extracellular_aa": topology.count("O"),
+            "has_signal": "S" in topology,
         }
-        protein_id = None
     return out
 
 
@@ -129,7 +128,7 @@ def read_blast_tabular(path: str | Path) -> dict[str, list[dict[str, Any]]]:
     hits: dict[str, list[dict[str, Any]]] = {}
     for row in _iter_rows(path):
         if len(row) < 12:
-            continue
+            raise ValueError(f"Malformed BLAST row: {row}")
         hits.setdefault(row[0], []).append(
             {
                 "subject": row[1],
@@ -139,6 +138,10 @@ def read_blast_tabular(path: str | Path) -> dict[str, list[dict[str, Any]]]:
                 "qend": int(row[7]),
                 "evalue": float(row[10]),
                 "bitscore": float(row[11]),
+                "sstart": int(row[8]),
+                "send": int(row[9]),
+                "qseq": row[12] if len(row) > 12 else None,
+                "sseq": row[13] if len(row) > 13 else None,
             }
         )
     return hits
@@ -152,21 +155,36 @@ def _iter_rows(path: str | Path) -> Iterator[list[str]]:
             yield line.rstrip("\n").split("\t")
 
 
+def host_alignments(hits: list[dict[str, Any]], query_length: int) -> list[HostHit]:
+    return [
+        HostHit(
+            accession=h["subject"],
+            identity_pct=h["identity_pct"],
+            evalue=h["evalue"],
+            query_coverage=(abs(h["qend"] - h["qstart"]) + 1) / max(query_length, 1),
+        )
+        for h in hits
+    ]
+
+
 def best_host_hit(
-    hits: list[dict[str, Any]], query_length: int
+    hits: list[dict[str, Any]],
+    query_length: int,
+    cfg: dict[str, Any] | None = None,
 ) -> HostHit | None:
-    """The salmon hit that matters is the most similar one, not the top-scoring
-    one: cross-reactivity risk is set by the closest match at any coverage."""
-    if not hits:
-        return None
-    best = max(hits, key=lambda h: h["identity_pct"])
-    coverage = (best["qend"] - best["qstart"] + 1) / max(query_length, 1)
-    return HostHit(
-        accession=best["subject"],
-        identity_pct=best["identity_pct"],
-        evalue=best["evalue"],
-        query_coverage=coverage,
-    )
+    """Select among significant, sufficiently covered HSPs before identity.
+
+    All HSPs are retained separately for review of short conserved patches.
+    """
+    candidates = host_alignments(hits, query_length)
+    if cfg:
+        candidates = [
+            h
+            for h in candidates
+            if h.evalue <= cfg["max_evalue"]
+            and h.query_coverage >= cfg["min_query_coverage"]
+        ]
+    return max(candidates, key=lambda h: (h.identity_pct, h.query_coverage), default=None)
 
 
 def read_epitopes(path: str | Path) -> dict[str, list[Epitope]]:
@@ -243,6 +261,7 @@ def read_expression(path: str | Path, stages: list[str]) -> dict[str, dict[str, 
     """Gene-by-stage TPM matrix. Columns absent from the file are left out of
     the per-gene dict rather than zero-filled, so "not assayed" stays visible."""
     out: dict[str, dict[str, float]] = {}
+    expression_stages(path, stages)
     for row in read_tsv(path):
         gene_id = row.get("gene_id") or row.get("gene")
         if not gene_id:
@@ -252,7 +271,25 @@ def read_expression(path: str | Path, stages: list[str]) -> dict[str, dict[str, 
             for stage in stages
             if stage in row and row[stage] not in ("", "NA")
         }
+    if any(
+        not math.isfinite(v) or v < 0 for values in out.values() for v in values.values()
+    ):
+        raise ValueError(f"Invalid TPM in {path}")
     return out
+
+
+def species_stages(config: dict[str, Any], species: str) -> list[str]:
+    return config["species"][species].get("life_stages", config.get("life_stages", []))
+
+
+def expression_stages(path: str | Path, stages: list[str]) -> list[str]:
+    with _open(path) as handle:
+        header = next((line for line in handle if not line.startswith("#")), "")
+    columns = header.rstrip().split("\t")
+    unknown = set(columns) - {"gene_id", "gene", *stages}
+    if unknown:
+        raise ValueError(f"Unknown expression stages in {path}: {sorted(unknown)}")
+    return [stage for stage in stages if stage in columns]
 
 
 def read_rnai(path: str | Path) -> dict[str, dict[str, str]]:
@@ -307,6 +344,8 @@ def topology_from_tools(
     tm = tmhmm.get(protein_id, {})
     prediction = sp.get("prediction", "OTHER")
     return Topology(
+        topology_string=tm.get("topology_string", ""),
+        signal_peptide_end=sp.get("signal_peptide_end"),
         has_signal_peptide=prediction not in ("OTHER", ""),
         signalp_prob=float(sp.get("probability", 0.0)),
         n_transmembrane=int(tm.get("n_transmembrane", 0)),

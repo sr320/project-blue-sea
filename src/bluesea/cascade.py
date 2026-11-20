@@ -44,9 +44,7 @@ def filter_length(record: ProteinRecord, cfg: dict[str, Any]) -> Verdict:
 
 def filter_low_complexity(record: ProteinRecord, cfg: dict[str, Any]) -> Verdict:
     """Repeat-rich sequences produce spurious epitope and homology signal."""
-    fraction = record.low_complexity_fraction or estimate_low_complexity(
-        record.sequence
-    )
+    fraction = record.low_complexity_fraction or estimate_low_complexity(record.sequence)
     record.low_complexity_fraction = fraction
     limit = cfg["max_fraction"]
     passed = fraction <= limit
@@ -98,15 +96,18 @@ def filter_exposure(record: ProteinRecord, cfg: dict[str, Any]) -> Verdict:
         return True, "confirmed in secretome proteomics", detail
 
     if topology.has_signal_peptide and topology.signalp_prob >= cfg["signalp_min_prob"]:
+        record.flag("antibody_access_unconfirmed")
         return True, f"signal peptide (p={topology.signalp_prob:.2f})", detail
 
     if topology.gpi_anchored and cfg.get("allow_gpi_anchored", True):
+        record.flag("antibody_access_unconfirmed")
         return True, "GPI-anchored surface protein", detail
 
     if (
         topology.n_transmembrane >= 1
         and topology.extracellular_aa >= cfg["min_extracellular_aa"]
     ):
+        record.flag("antibody_access_unconfirmed")
         return (
             True,
             f"membrane protein with {topology.extracellular_aa} aa extracellular",
@@ -127,7 +128,16 @@ def filter_host_similarity(record: ProteinRecord, cfg: dict[str, Any]) -> Verdic
     in the fish being protected. No score compensates for this, so it is a
     filter rather than a penalty.
     """
-    hit = record.host_hit
+    hits = record.host_hits or ([record.host_hit] if record.host_hit else [])
+    qualifying = [
+        h
+        for h in hits
+        if h.evalue <= cfg["max_evalue"] and h.query_coverage >= cfg["min_query_coverage"]
+    ]
+    if any(h.identity_pct > cfg["max_identity_pct"] for h in hits if h not in qualifying):
+        record.flag("short_host_similar_patch")
+    hit = max(qualifying, key=lambda h: h.identity_pct, default=None)
+    record.host_hit = hit
     if hit is None:
         return True, "no salmon homolog detected", {"host_identity_pct": None}
 
@@ -141,12 +151,12 @@ def filter_host_similarity(record: ProteinRecord, cfg: dict[str, Any]) -> Verdic
         hit.evalue <= cfg["max_evalue"]
         and hit.query_coverage >= cfg["min_query_coverage"]
     )
-    if significant and hit.identity_pct > cfg["max_identity_pct"]:
+    if significant and hit.identity_pct >= cfg["max_identity_pct"]:
         return (
             False,
             (
                 f"{hit.identity_pct:.1f}% identity to salmon {hit.accession} "
-                f"exceeds {cfg['max_identity_pct']}%"
+                f"meets/exceeds {cfg['max_identity_pct']}%"
             ),
             detail,
         )
@@ -154,17 +164,16 @@ def filter_host_similarity(record: ProteinRecord, cfg: dict[str, Any]) -> Verdic
 
 
 def filter_epitopes(record: ProteinRecord, cfg: dict[str, Any]) -> Verdict:
-    """Require predicted B-cell epitopes on the accessible surface.
+    """Annotate predicted linear patches on the predicted outside surface.
 
-    Weak evidence by construction: the predictors are calibrated on human and
-    mouse immunology, and salmon IgM/IgT recognition differs. The threshold is
-    set low on purpose so this step removes only the clearly epitope-free.
+    Salmon protection is not calibrated by mammalian antibody-complex training.
+    This is advisory unless an explicit hard-filter ablation is configured.
     """
     good = [
         epitope
-        for epitope in record.epitopes
+        for epitope in record.accessible_epitopes()
         if epitope.score >= cfg["min_epitope_score"]
-        and epitope.length >= cfg.get("window", 15) // 2
+        and epitope.length >= cfg.get("min_length", 7)
     ]
     detail = {
         "n_epitopes": len(good),
@@ -174,7 +183,12 @@ def filter_epitopes(record: ProteinRecord, cfg: dict[str, Any]) -> Verdict:
     }
     minimum = cfg["min_linear_epitopes"]
     if len(good) < minimum:
-        return False, f"{len(good)} qualifying epitopes, need {minimum}", detail
+        record.flag("weak_predicted_epitope_support")
+        return (
+            not cfg.get("hard_filter", False),
+            f"{len(good)} qualifying epitopes, need {minimum}",
+            detail,
+        )
     record.flag("epitope_prediction_mammal_calibrated")
     return True, f"{len(good)} qualifying epitopes", detail
 
@@ -199,6 +213,9 @@ def filter_expression(record: ProteinRecord, cfg: dict[str, Any]) -> Verdict:
         "max_tpm": round(max(record.expression.values()), 2),
     }
     minimum = cfg["min_stages_expressed"]
+    if len(record.expression) < minimum:
+        record.flag("expression_insufficient_stages")
+        return True, "too few stages assayed to test breadth", detail
     if len(expressed) < minimum:
         return (
             False,
@@ -275,7 +292,14 @@ def run_cascade(
     for step_name, cfg_key, step in steps_for(phase):
         if stop_on_fail and not record.survived:
             break
-        passed, reason, detail = step(record, cascade_cfg[cfg_key])
+        if record.benchmark_only and step_name == "exposure":
+            passed, reason, detail = (
+                True,
+                "host-spike exposure bypass; independent homology control",
+                {},
+            )
+        else:
+            passed, reason, detail = step(record, cascade_cfg[cfg_key])
         record.record_verdict(step_name, passed, reason, **detail)
     return record
 

@@ -8,11 +8,15 @@ From: mambaorg/micromamba:1.5.8
     workflow/envs/environment.yml /tmp/environment.yml
     pyproject.toml /opt/bluesea/pyproject.toml
     src /opt/bluesea/src
+    workflow/predictors /opt/predictors
 
 %post
     micromamba install -y -n base -f /tmp/environment.yml
     micromamba clean --all --yes
     /opt/conda/bin/python -m pip install --no-deps /opt/bluesea
+    if [ -f /opt/predictors/install.sh ]; then
+        bash /opt/predictors/install.sh
+    fi
 
 %environment
     export PATH=/opt/conda/bin:$PATH

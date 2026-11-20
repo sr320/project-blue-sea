@@ -19,13 +19,14 @@ the rubric is wrong and gets rebuilt before anyone reads a novel candidate.
 
 from __future__ import annotations
 
+import copy
 import random
 import statistics
 from collections.abc import Mapping
 from typing import Any
 
 from .records import ProteinRecord
-from .scoring import CRITERIA, rank
+from .scoring import CRITERIA, gene_representatives, rank
 
 # Which criteria each evidence source feeds, for leave-one-source-out.
 SOURCE_CRITERIA = {
@@ -140,6 +141,15 @@ def negative_control_report(
     for label, (want, accessions) in as_negative_groups(expected).items():
         present = [by_id[a] for a in sorted(accessions) if a in by_id]
         if not present:
+            rows.append(
+                {
+                    "protein_id": label,
+                    "n_accessions": 0,
+                    "expected_drop_step": want,
+                    "actual_drop_step": "missing",
+                    "passed": False,
+                }
+            )
             continue
         got = sorted({record.dropped_at or "survived" for record in present})
         rows.append(
@@ -201,8 +211,10 @@ def weight_perturbation(
     Weights are a judgment, not a measurement. If the top ten reshuffles when
     essentiality moves a few points, that instability is itself a finding.
     """
+    if n < 1:
+        raise ValueError("n_perturbations must be positive")
     rng = random.Random(seed)
-    baseline = rank(list(records), weights_cfg)
+    baseline = rank(copy.deepcopy(records), weights_cfg)
     baseline_tier = [r.protein_id for r in top_tier(baseline, fraction)]
     appearances = dict.fromkeys(baseline_tier, 0)
 
@@ -217,7 +229,7 @@ def weight_perturbation(
             },
             **{k: v for k, v in weights_cfg.items() if k != "weights"},
         }
-        ranked = rank(list(records), perturbed)
+        ranked = rank(copy.deepcopy(records), perturbed)
         for record in top_tier(ranked, fraction):
             if record.protein_id in appearances:
                 appearances[record.protein_id] += 1
@@ -246,13 +258,13 @@ def leave_one_source_out(
     the bench. One that depends entirely on a single source is interesting but
     fragile, and gets labelled that way in its dossier.
     """
-    baseline = rank(list(records), weights_cfg)
+    baseline = rank(copy.deepcopy(records), weights_cfg)
     baseline_tier = {r.protein_id for r in top_tier(baseline, fraction)}
 
     per_source: dict[str, list[str]] = {}
     for source in sources:
         dropped = SOURCE_CRITERIA.get(source, set())
-        ranked = rank(list(records), weights_cfg, drop_sources=dropped)
+        ranked = rank(copy.deepcopy(records), weights_cfg, drop_sources=dropped)
         per_source[source] = [r.protein_id for r in top_tier(ranked, fraction)]
 
     robust = set(baseline_tier)
@@ -287,7 +299,14 @@ def run_benchmark(
     before running the full screen, not tune it until this turns True.
     """
     fraction = validation_cfg["top_tier_fraction"]
-    survivors = [record for record in records if record.survived]
+    # Deterministic benchmark: remove literature evidence rather than asking
+    # a model to forget known trial results. Production has separate sensitivity.
+    records = copy.deepcopy(records)
+    for record in records:
+        record.literature = None
+    survivors = gene_representatives(
+        rank([r for r in records if r.survived and not r.benchmark_only], weights_cfg)
+    )
     ranked = rank(list(survivors), weights_cfg)
 
     positives = positive_control_report(
@@ -311,12 +330,153 @@ def run_benchmark(
         survivors, weights_cfg, robustness_cfg["leave_one_source_out"], fraction
     )
 
+    sensitivity = sensitivity_verdict(perturbation, loso, robustness_cfg)
     return {
-        "gate_passed": positives["passed"] and negatives["passed"],
+        "gate_passed": positives["passed"]
+        and negatives["passed"]
+        and sensitivity["passed"],
+        "sensitivity_validation": sensitivity,
         "positive_controls": positives,
         "negative_controls": negatives,
         "random_controls": randoms,
         "weight_perturbation": perturbation,
         "leave_one_source_out": loso,
         "criteria": list(CRITERIA),
+        "literature_policy": "excluded; constant missing-evidence score for all records",
+    }
+
+
+def sensitivity_report(records, weights_cfg, validation_cfg):
+    """Sensitivity of the actual ranking, preserving baseline scores in place."""
+    cfg = validation_cfg["robustness"]
+    for record in records:
+        record.flags = [f for f in record.flags if f != "single_source_dependent"]
+    report = {
+        "population": "one representative per species/gene",
+        "weight_perturbation": weight_perturbation(
+            records,
+            weights_cfg,
+            cfg["weight_perturbation_pct"],
+            cfg["n_perturbations"],
+            validation_cfg["top_tier_fraction"],
+            validation_cfg["random_seed"],
+        ),
+        "leave_one_source_out": leave_one_source_out(
+            records,
+            weights_cfg,
+            cfg["leave_one_source_out"],
+            validation_cfg["top_tier_fraction"],
+        ),
+    }
+    report["validation"] = sensitivity_verdict(
+        report["weight_perturbation"], report["leave_one_source_out"], cfg
+    )
+    return report
+
+
+def sensitivity_verdict(perturbation, loso, cfg):
+    size = len(loso["baseline_top_tier"])
+    robust_fraction = len(loso["robust"]) / size if size else 0.0
+    minimum_stability = cfg.get("min_mean_stability", 0.8)
+    minimum_robust = cfg.get("min_robust_fraction", 0.5)
+    return {
+        "passed": bool(size)
+        and perturbation["mean_stability"] >= minimum_stability
+        and robust_fraction >= minimum_robust,
+        "mean_stability": perturbation["mean_stability"],
+        "min_mean_stability": minimum_stability,
+        "robust_top_tier_fraction": robust_fraction,
+        "min_robust_fraction": minimum_robust,
+        "scope": "Weight and score-source sensitivity among survivors; "
+        "does not test filter false negatives.",
+    }
+
+
+def construct_report(records, weights_cfg, validation_cfg, registry):
+    """Trace experimental constructs without assigning efficacy to components.
+
+    Recovery is diagnostic until a complete independently sourced benchmark
+    is curated. A multi-component construct requires every louse component.
+    """
+    from pathlib import Path
+
+    from .io import read_fasta
+    from .provenance import file_digest
+
+    population = copy.deepcopy(records)
+    for record in population:
+        record.literature = None
+    ranked = gene_representatives(
+        rank([r for r in population if r.survived and not r.benchmark_only], weights_cfg)
+    )
+    tier = {r.protein_id for r in top_tier(ranked, validation_cfg["top_tier_fraction"])}
+    positions = {r.protein_id: i for i, r in enumerate(ranked, 1)}
+    by_id = {r.protein_id: r for r in population}
+    rows = []
+    studies = set()
+    for construct in registry["constructs"]:
+        components = []
+        for component in construct["louse_components"]:
+            ids = set(component["mapped_accessions"])
+            present = [by_id[pid] for pid in ids if pid in by_id]
+            components.append(
+                {
+                    "name": component["name"],
+                    "source_accession": component["source_accession"],
+                    "source_region": component["source_region"],
+                    "mapping_status": component["mapping_status"],
+                    "present": bool(present),
+                    "in_top_tier": bool(ids & tier),
+                    "best_rank": min(
+                        (positions[p] for p in ids if p in positions), default=None
+                    ),
+                    "drop_steps": sorted({r.dropped_at or "survived" for r in present}),
+                }
+            )
+        sequence_file = construct.get("sequence_file")
+        sequence_verified = bool(
+            sequence_file
+            and Path(sequence_file).is_file()
+            and file_digest(sequence_file) == construct.get("sequence_sha256")
+            and len(list(read_fasta(sequence_file))) == 1
+        )
+        eligible = (
+            construct["curation_status"] == "verified"
+            and all(c["mapping_status"] == "verified" for c in components)
+            and sequence_verified
+        )
+        if eligible:
+            studies.add(construct["study_doi"])
+        rows.append(
+            {
+                **construct,
+                "component_recovery": components,
+                "all_components_in_top_tier": bool(components)
+                and all(c["in_top_tier"] for c in components),
+                "eligible_for_gate": eligible,
+            }
+        )
+    recovered_by_study = {}
+    for row in rows:
+        recovered_by_study.setdefault(row["study_doi"], []).append(
+            row["all_components_in_top_tier"]
+        )
+    # A study counts once regardless of how many constructs share its controls.
+    recovered = (
+        sum(all(values) for values in recovered_by_study.values())
+        / len(recovered_by_study)
+        if recovered_by_study
+        else 0.0
+    )
+    return {
+        "recovered_fraction": recovered,
+        "recovery_passed": recovered
+        >= validation_cfg["min_positive_controls_in_top_tier"],
+        "ready": bool(rows)
+        and all(r["eligible_for_gate"] for r in rows)
+        and len(studies) >= validation_cfg.get("min_independent_studies", 2),
+        "independent_studies": len(studies),
+        "constructs": rows,
+        "interpretation": "Component recovery does not establish full-protein efficacy. "
+        "Pending sequence/mapping curation blocks readiness.",
     }

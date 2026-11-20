@@ -1,15 +1,16 @@
 # project-blue-sea: antigen discovery pipeline configuration
 #
-# Every path here is resolved relative to `workdir` unless absolute.
+# Data paths are relative to `workdir`; control/source packet paths are
+# relative to the invocation directory. Local predictor paths should be absolute.
 # Reference data is read-only; scratch is re-creatable; results are durable.
 
 workdir: "."
 paths:
   reference: "resources/reference"   # downloaded proteomes, read-only
-  scratch: "scratch"                 # tool output, safe to delete
-  results: "results"                 # ranked lists + dossiers, durable
+  scratch: "scratch/pilot"                 # tool output, safe to delete
+  results: "results/pilot"                 # ranked lists + dossiers, durable
   cache: "cache/llm"                 # API response cache, durable
-  logs: "logs"
+  logs: "logs/pilot"
 
 # `accession` and `assembly` together form the NCBI FTP path the download rule
 # builds, so they have to be the matching pair for one release -- the config
@@ -26,16 +27,24 @@ species:
     accession: "GCF_016086655.4"
     proteome: "lsal/proteins.faa"
     gff: "lsal/annotation.gff3"
-    expression: "lsal/stage_tpm.tsv"       # gene_id x life stage, TPM
-    rnai: "lsal/rnai_phenotypes.tsv"       # from LiceBase
+    secretome: null  # reference-relative accession list with primary-source support
+    gpi: null        # reference-relative accession list with recorded method
+    expression: null # "lsal/stage_tpm.tsv"       # gene_id x life stage, TPM
+    rnai: null  # set to a curated local phenotype table when available
+    life_stages: [copepodid, chalimus_I, chalimus_II, preadult_I, preadult_II, adult_male, adult_female]
+    early_stages: [copepodid, chalimus_I]
   crog:
     label: "Caligus rogercresseyi"
     assembly: "ASM1338718v1"
     accession: "GCA_013387185.1"
     proteome: "crog/proteins.faa"
     gff: "crog/annotation.gff3"
-    expression: "crog/stage_tpm.tsv"
-    rnai: null                              # no RNAi resource published
+    secretome: null
+    gpi: null
+    expression: null # "crog/stage_tpm.tsv"
+    rnai: null  # no curated phenotype table supplied
+    life_stages: [copepodid, chalimus_I, chalimus_II, chalimus_III, chalimus_IV, adult_male, adult_female]
+    early_stages: [copepodid, chalimus_I]
 
 host:
   label: "Salmo salar"
@@ -43,21 +52,35 @@ host:
   accession: "GCF_905237065.1"
   proteome: "ssal/proteins.faa"
 
-# Life stages that count as "parasitic" for the expression-breadth criterion.
-# Shard counts for the per-protein predictors. Tune to the queue, not to the
-# proteome: more shards means more jobs, not less work. The candidate stage
-# gets fewer because it sees roughly one protein in nine.
+# Start with a bounded, reproducible pilot. Full mode requires a passed pilot
+# report with matching configuration/weights; see docs/validation.md.
+screening:
+  mode: pilot
+  random_n: 200
+  seed: 20261118
+  pilot_report: results/pilot/benchmark.json
+
 n_shards: 50
 n_shards_candidates: 10
 
-life_stages:
-  - copepodid
-  - chalimus_I
-  - chalimus_II
-  - preadult_I
-  - preadult_II
-  - adult_male
-  - adult_female
+# Commands run in independent working directories. Licensed tools and local
+# model files must be installed explicitly; tools-check fails until configured.
+predictors:
+  signalp:
+    version: null
+    command: [signalp6, --fastafile, "{input}", --organism, eukarya, --format, none, --output_dir, "{output_dir}"]
+    native_output: output/prediction_results.txt
+    required_files: []
+  deeptmhmm:
+    version: null
+    command: []  # supply a local driver; output must be predicted_topologies.3line
+    native_output: output/predicted_topologies.3line
+    required_files: []
+  bepipred:
+    version: null
+    command: [python, -m, bluesea.bepipred, --repo, /opt/predictors/BepiPred-3.0, --esm-model, /opt/predictors/models/esm2_t33_650M_UR50D.pt, --fasta, "{input}", --output-dir, "{output_dir}"]
+    native_output: output/raw_output.csv
+    required_files: []
 
 # ---------------------------------------------------------------------------
 # Filter cascade. Order is cost-ascending: cheap sequence filters run first so
@@ -90,12 +113,14 @@ cascade:
   host_similarity:
     # Hard exclusion. A candidate with this much identity to any salmon protein
     # risks raising autoantibodies in the vaccinated fish.
-    max_identity_pct: 40.0
+    max_identity_pct: 40.0 # heuristic homology exclusion, not a safety guarantee
     max_evalue: 1.0e-5
     min_query_coverage: 0.30
   low_complexity:
     max_fraction: 0.5
   epitope:
+    hard_filter: false  # uncertain transfer to salmon; advisory by default
+    min_length: 7
     min_linear_epitopes: 2
     min_epitope_score: 0.5
     window: 15
@@ -113,6 +138,7 @@ orthology:
   max_evalue: 1.0e-10
   # Conservation must hold where it matters: across predicted epitopes.
   epitope_region_min_identity_pct: 50.0
+  epitope_region_min_coverage: 0.8
 
 llm:
   model: "claude-opus-4-6"
@@ -140,6 +166,8 @@ symbiont:
   enabled: true
   # Gate: the track stops here unless the obligate-symbiosis signature appears.
   signature:
+    min_completeness: 90.0
+    max_contamination: 5.0
     min_populations_present: 3
     max_genome_size_mb: 2.0
     min_prevalence: 0.95
@@ -153,6 +181,10 @@ symbiont:
     - Flavobacterium
 
 validation:
+  construct_controls: resources/controls/experimental_constructs.json
+  min_independent_studies: 2
+  require_host_spikes: true
+  host_spike_n: 3
   positive_controls: "resources/controls/positive_controls.tsv"
   negative_controls: "resources/controls/negative_controls.tsv"
   random_control_n: 200
@@ -162,9 +194,13 @@ validation:
   top_tier_fraction: 0.10
   min_positive_controls_in_top_tier: 0.60
   robustness:
+    min_mean_stability: 0.8
+    min_robust_fraction: 0.5
     weight_perturbation_pct: 20
     n_perturbations: 100
     leave_one_source_out:
       - rnai
       - expression
       - literature
+      - epitope
+      - orthology

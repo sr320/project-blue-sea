@@ -45,7 +45,7 @@ def score_essentiality(record: ProteinRecord, cfg: dict[str, Any]) -> float:
     table = cfg["phenotype_scores"]
     phenotype = record.rnai.phenotype or "untested"
     score = table.get(phenotype, table["untested"])
-    if phenotype == "untested":
+    if phenotype == "untested" or phenotype not in table:
         record.flag(cfg.get("untested_flag", "essentiality_unknown"))
 
     ortholog_evidence = record.scores.get("_ortholog_essentiality")
@@ -65,28 +65,26 @@ def score_epitope(record: ProteinRecord, cfg: dict[str, Any]) -> float:
     Saturation keeps a 1,500-residue protein from outscoring a good small one
     purely on surface area.
     """
-    epitopes = record.epitopes
+    epitopes = record.accessible_epitopes()
     if not epitopes:
         return 0.0
     mean_score = sum(e.score for e in epitopes) / len(epitopes)
     count_term = min(1.0, len(epitopes) / cfg["count_saturation"])
     return (
-        cfg["mean_score_weight"] * min(1.0, mean_score)
-        + cfg["count_weight"] * count_term
+        cfg["mean_score_weight"] * min(1.0, mean_score) + cfg["count_weight"] * count_term
     )
 
 
 def score_conservation(record: ProteinRecord, cfg: dict[str, Any]) -> float:
     """Cross-species conservation between the two louse genera.
 
-    A protein conserved across genera is a candidate for a vaccine that serves
-    both industries, and the conservation is independent evidence of
-    functional essentiality -- which is why it is scored separately from the
-    RNAi axis rather than folded into it.
+    Conservation supports a shared-sequence hypothesis. It does not establish
+    functional essentiality, antibody binding, or protection in either species.
     """
     ortholog = record.best_ortholog()
     if ortholog is None:
-        return 0.0
+        record.flag("orthology_not_detected")
+        return cfg.get("default_when_missing", 0.4)
 
     identity = (
         ortholog.epitope_region_identity_pct
@@ -119,8 +117,14 @@ def score_expression_breadth(record: ProteinRecord, cfg: dict[str, Any]) -> floa
     expressed = {
         stage for stage, tpm in record.expression.items() if tpm >= cfg["min_tpm"]
     }
-    breadth = len(expressed) / len(record.expression)
-    if expressed & set(cfg.get("early_stages", [])):
+    denominator = len(record.expected_stages) or len(record.expression)
+    if len(record.expression) < denominator:
+        record.flag("expression_partial_coverage")
+    # Unassayed stages contribute neutral evidence instead of perfect breadth.
+    breadth = (
+        len(expressed) + 0.5 * (denominator - len(record.expression))
+    ) / denominator
+    if expressed & set(record.early_stages or cfg.get("early_stages", [])):
         breadth += cfg.get("early_stage_bonus", 0.0)
     return min(1.0, breadth)
 
@@ -219,7 +223,9 @@ def rank(
 ) -> list[ProteinRecord]:
     for record in records:
         score_record(record, weights_cfg, drop_sources=drop_sources)
-    return sorted(records, key=lambda r: r.total_score, reverse=True)
+    return sorted(
+        records, key=lambda r: (-r.total_score, r.species, r.gene_id, r.protein_id)
+    )
 
 
 def ranking_rows(records: list[ProteinRecord]) -> list[dict[str, Any]]:
@@ -237,7 +243,7 @@ def ranking_rows(records: list[ProteinRecord]) -> list[dict[str, Any]]:
             "host_identity_pct": (
                 record.host_hit.identity_pct if record.host_hit else ""
             ),
-            "cross_species": bool(record.best_ortholog()),
+            "cross_species": "cross_species_candidate" in record.flags,
             "flags": ";".join(record.flags),
         }
         row.update({f"score_{c}": record.scores.get(c, "") for c in CRITERIA})
@@ -259,3 +265,17 @@ RANKING_COLUMNS = [
     "flags",
     "description",
 ]
+
+
+def gene_representatives(records: list[ProteinRecord]) -> list[ProteinRecord]:
+    """One best-scoring isoform per species/gene; keep all isoforms separately."""
+    seen = set()
+    result = []
+    for record in sorted(
+        records, key=lambda r: (-r.total_score, r.species, r.protein_id)
+    ):
+        key = (record.species, record.gene_id or record.protein_id)
+        if key not in seen:
+            seen.add(key)
+            result.append(record)
+    return result

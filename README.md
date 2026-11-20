@@ -1,219 +1,133 @@
 # project-blue-sea
 
-An automated reverse-vaccinology screen of the salmon louse proteome, looking
-for **protein vaccine antigens** against *Lepeophtheirus salmonis* and
-*Caligus rogercresseyi*.
+A reverse-vaccinology research pipeline for prioritizing protein antigen
+hypotheses against *Lepeophtheirus salmonis* and *Caligus rogercresseyi*.
+It produces auditable filtering decisions, gene-level rankings, sensitivity
+reports and candidate dossiers. Ranking scores are heuristic priorities;
+challenge trials are required to establish efficacy.
 
-It produces a ranked, cited candidate dossier: predicted localisation and
-topology, B-cell epitope map, expression across life stages, salmon
-cross-reactivity risk, orthology to antigens tried in other parasitic
-arthropods, and a literature summary. **It produces hypotheses for the bench.
-It does not predict efficacy, and nothing it outputs substitutes for a
-challenge trial.**
+The default configuration runs a **bounded pilot**: mapped experimental
+components and negative controls, 200 reproducibly sampled background proteins
+per species, and three real salmon-proteome sequence spikes. A full predictor
+screen requires a passing pilot report under the same biology, tools, controls
+and scoring settings.
 
-## Why
+## Current readiness
 
-[Bm86](https://pmc.ncbi.nlm.nih.gov/articles/PMC10295593) remains the only
-clearly effective commercial ectoparasite vaccine, working on the
-concealed-antigen principle: ingested antibody lyses tick gut epithelium.
-Sea lice work has followed that logic with mixed results — the best current
-data, from [chimeric P0 constructs](https://pmc.ncbi.nlm.nih.gov/articles/PMC12133460),
-report 88–91% lice reduction at two to three months decaying to 20% and ~4%
-by eleven months.
+The Python logic and workflow handoffs can be tested locally. The checked-in
+configuration is **not biologically validated**. Licensed local predictors,
+model weights, exact experimental construct sequences and additional
+independent benchmark studies still need provisioning/curation. These are
+explicit readiness failures. A diagnostic ranking can still be generated and
+inspected when a biological benchmark fails.
 
-Three things follow, and the rubric encodes them:
-
-1. **Durability is the binding constraint, not initial titer.** Essentiality
-   and constitutive expression outweigh predicted immunogenicity.
-2. **Antibody titer does not predict protection in salmon.** Functional
-   essentiality has to be an independent axis.
-3. **The search has been narrow.** Most tested antigens were picked because
-   they were already characterised in ticks. The 19,574-gene proteome has
-   never been screened end to end against explicit criteria.
-
-## Layout
-
-```
-config/config.yaml      cascade thresholds, paths, budgets
-config/weights.yaml     scoring weights (version-controlled on purpose)
-src/bluesea/
-  records.py            the record carried through every stage
-  io.py                 parsers for SignalP, DeepTMHMM, BLAST, epitopes
-  cascade.py            the two-phase filter cascade + per-protein audit
-  orthology.py          reciprocal best hits, cross-species intersection
-  scoring.py            the eight weighted criteria
-  llm.py                cached, budgeted API client with dry-run
-  literature.py         the one Claude-judged axis, blindable
-  dossier.py            one-page candidate write-ups
-  validation.py         positive/negative controls, robustness, the gate
-  symbiont.py           the exploratory symbiont arm and its go/no-go
-workflow/Snakefile      the three-stage workflow
-resources/controls/     positive and negative control sets
-```
-
-## Running it
+## Development
 
 ```bash
 pip install -e '.[dev]'
-pytest
+pytest -q
+ruff check .
+# Python >=3.11, for workflow integration tests and Snakemake:
+pip install -e '.[dev,workflow]'
+pytest -q tests/test_workflow_integration.py
 ```
 
-On the cluster, run the pre-flight checks first — they confirm the account,
-the bind path, and whether compute nodes really lack outbound access, which
-is the assumption the whole architecture rests on:
+The workflow integration test executes the actual DAG with stand-in tools
+that emit native predictor schemas. It tests concurrency, parsers, checkpoints,
+immutable handoffs, host spikes, ranking, sensitivity and a clean second run.
+It does not evaluate predictor accuracy.
 
-```bash
-bash scripts/hyak_preflight.sh --account srlab --partition compute
-```
+## Running a pilot
 
-See [docs/hyak.md](docs/hyak.md) for what each check means.
-
-Then build the container and fetch the reference data. The expression
-matrices and the RNAi table are not on NCBI and have to be supplied by hand —
-[docs/reference-data.md](docs/reference-data.md) lists what goes where:
+1. Install local predictors and weights; set commands, versions and required
+   files in `config/config.yaml`. See [docs/tools.md](docs/tools.md).
+2. Build and check the container; provision NCBI references. See
+   [docs/reference-data.md](docs/reference-data.md) and [docs/hyak.md](docs/hyak.md).
+3. Run the pilot, inspect the diagnostic outputs, then evaluate its gate.
 
 ```bash
 bash scripts/build_container.sh
-snakemake --profile workflow/profiles/slurm --use-apptainer provision
+snakemake -s workflow/Snakefile --profile workflow/profiles/slurm provision
+snakemake -s workflow/Snakefile --profile workflow/profiles/slurm all
+snakemake -s workflow/Snakefile --profile workflow/profiles/slurm gate
 ```
 
-The workflow is three stages, split because Hyak compute nodes cannot be
-assumed to have outbound network access:
+`all` preserves `benchmark.json` even when biological validation fails; `gate`
+returns nonzero on a failed report. Before submitting jobs, inspect the DAG:
 
 ```bash
-# Stage 1 and 3: deterministic, no network, SLURM array jobs
-snakemake --profile workflow/profiles/slurm --use-apptainer all
-
-# Stage 2: API calls, from a node with outbound access. Dry run by default.
-BLUESEA_LIVE=1 bluesea literature --species lsal --live
+snakemake -s workflow/Snakefile --profile workflow/profiles/local -n all
 ```
 
-Run the gate before trusting anything:
+Full-mode configuration uses a complete copy of the pilot configuration with
+`screening.mode: full` and separate scratch/results/log directories. Supply it
+with `--configfile`; the workflow checks the pilot inside the configured container before preparing full predictor inputs.
+See [docs/validation.md](docs/validation.md) for readiness and curation rules.
 
-```bash
-snakemake gate   # non-zero exit means rebuild the rubric, not tune it
-```
+## Evidence and biological assumptions
 
-## The cascade
+- **Exposure:** SignalP/DeepTMHMM provide predicted secretion and topology,
+  not tissue localization or demonstrated host-antibody contact. Predicted
+  routes carry an uncertainty flag. Intracellular proteins are excluded by
+  the current exposure policy; loss of experimental components is reported
+  rather than repaired by tuning controls into the shortlist.
+- **Host similarity:** every returned significant HSP with at least 30% query
+  coverage is considered before the 40% identity heuristic is applied.
+  Short high-identity patches remain flagged for review. This screen neither
+  establishes cross-reactivity nor certifies safety.
+- **Epitopes:** native BepiPred residue scores become contiguous intervals.
+  Only linear intervals wholly within predicted outside regions contribute
+  when residue topology is available. This is advisory by default because
+  mammalian antibody-complex training does not calibrate salmon protection.
+- **Expression:** stages are species-specific. *Caligus* has four chalimus
+  stages and no preadult stages; *L. salmonis* has two chalimus and two
+  preadult stages. Unassayed stages are distinguished from zero expression.
+  [Primary *Caligus* genome study](https://www.nature.com/articles/s41597-021-00842-w).
+- **Conservation:** cross-species status requires bilateral reciprocal matches
+  and measured epitope-region identity and coverage. Unaligned epitope residues
+  count against identity. Shared sequence does not establish essentiality or
+  cross-protection.
+- **Essentiality:** RNAi evidence is scored separately; untested is distinct
+  from a reported null phenotype. RNAi knockdown and antibody perturbation
+  need not produce the same effect.
+- **Literature:** optional model judgments use curated excerpts backed by
+  checksummed local snapshots. Missing sources yield no model call and a
+  neutral missing-evidence score. Returned citations must refer to supplied
+  sources. The deterministic benchmark excludes literature evidence entirely.
 
-Order is cost-ascending, so the cheap filters run first and the expensive
-predictors only ever see survivors.
+The [2025 P0 study](https://doi.org/10.3389/fimmu.2025.1570948) evaluated chimeric
+constructs with adjuvant and prime-boost delivery. At the first main count,
+reductions were 88–91% against non-injected controls and 77–84% against adjuvant
+controls. Effects differed at later challenges. These results motivate
+longitudinal testing but do not establish that constitutive expression or
+essentiality predicts protection duration. The study's limited antibody
+sampling also does not settle whether titer predicts protection.
 
-| Step | What it asks | Typical attrition |
-| --- | --- | --- |
-| length | 50–2000 aa | small |
-| low_complexity | not repeat-dominated | small |
-| **exposure** | **is there any route to host antibody?** | **~8 in 9** |
-| — *prefilter ends here* — | | |
-| host_similarity | <40% identity to any salmon protein (hard) | moderate |
-| epitope | ≥2 predicted B-cell epitopes | moderate |
-| expression | expressed in ≥2 parasitic stages | small |
-| transmembrane | expressibility warning only, never excludes | none |
+## Outputs and layout
 
-The workflow runs the cascade in two halves, split at that line. The first
-three steps need only SignalP and DeepTMHMM, which have to see every protein
-because exposure is built on them. Epitope prediction and the salmon homology
-search are the costly pair, and both sit after exposure, so they run against
-the survivor FASTA the prefilter writes — about one protein in nine. The
-halves reconstruct the whole exactly: same verdicts, same order, same drop
-step, which is what `tests/test_cascade.py` pins.
+The default paths are `scratch/pilot`, `logs/pilot`, and `results/pilot`.
 
-To measure what exposure costs in false negatives, set
-`cascade.prefilter.enabled: false` and run `cascade --profile`. That sends the
-whole proteome to the predictors, which is the expensive way to run and the
-only way to see what the filter rejected.
+| Output | Purpose |
+| --- | --- |
+| `ranked_all.tsv`, `<species>/ranked.tsv` | One best-scoring isoform per species/gene |
+| `ranking_sensitivity.json` | Weight perturbations and removal of each score source |
+| `benchmark.json` | Deterministic recovery, control completeness and readiness |
+| `dossiers/` | Scores, evidence, caveats and supported domain suggestions |
+| `provenance.json` | Code/configuration hashes and run context |
+| `scratch/<species>/raw/<tool>/<shard>/` | Native predictions, logs and checksum manifests |
+| `logs/<species>/cascade_audit.jsonl` | Every protein's filter decisions |
 
-The exposure filter does most of the work and is also the least certain:
-predicted secretion is not confirmed secretion. Every verdict is logged per
-protein to `logs/<species>/cascade_audit.jsonl`, so a dropped candidate traces
-to the exact rule that dropped it — including the proteins the prefilter
-dropped, which stay in the record set for exactly that reason.
+Records progress through separate `prefiltered`, `assembled`, `cascaded`,
+`orthologized`, `assessed`, and `ranked` JSON files. Enrichment stages do not
+overwrite their inputs. All isoforms remain in the record files for inspection.
+Sensitivity flags are persisted into ranked records and dossiers.
 
-The cascade runs once per species; the two shortlists are then intersected.
-A protein conserved across two genera is a candidate for a vaccine serving
-both industries, and that conservation is independent evidence of functional
-essentiality.
+Weights and sensitivity thresholds are explicit judgments in `config/`.
+Sensitivity analyzes score dependence among survivors; it does not test
+false negatives introduced by hard filters. Disable the prefilter's predictor
+restriction and profile the cascade only when undertaking that separate,
+more expensive analysis.
 
-## Scoring
-
-Seven of eight criteria are deterministic code over tool output. Only the
-literature axis calls the API, and it returns a score with a written
-justification and citations so a reviewer can check the reasoning. Weights
-live in `config/weights.yaml`; re-ranking under different weights is cheap and
-should be routine. If the top ten changes completely when essentiality drops
-from 20 to 15, that instability is a finding and belongs in the output.
-
-Missing evidence scores as a configured neutral value and raises a flag —
-never zero. RNAi coverage is partial, so absence of a knockdown phenotype is
-absence of evidence, and scoring it zero would bias the screen toward the
-already-studied proteins the project exists to look past.
-
-## Cost controls
-
-Across both species the starting set is ~37,700 proteins, so the most
-important budget decision is **not calling the API on all of them**. Three
-controls:
-
-- **per-stage spend ceilings** that halt the stage rather than overrun it;
-- a **disk cache** keyed on a hash of the exact prompt, so reruns re-spend
-  nothing — this is where debugging budgets actually go;
-- **dry-run by default**, reporting projected calls and tokens without
-  calling. Any config change should get a dry run first.
-
-## Validation
-
-Build the benchmark before the first full run.
-
-Before even that, ask whether the gate can pass at all — it costs nine
-proteins rather than 37,700:
-
-```bash
-python scripts/control_smoke_test.py     # extracts the controls
-# run signalp6 and DeepTMHMM on the FASTA it writes, then:
-python scripts/control_smoke_test.py     # verdicts, non-zero if unreachable
-```
-
-Three of the five mapped positive controls — P0, akirin and peroxiredoxin —
-are intracellular proteins, and the exposure filter exists to drop proteins
-with no route to host antibody. If it drops them they never reach the
-ranking, `recovered_fraction` is capped below its threshold, and the gate
-fails however good the ranking is. That is decided by the first three cascade
-steps, which need only SignalP and DeepTMHMM, so it is answerable in minutes.
-
-A failure there is a finding, not a crash: it says the exposure axis and the
-only antigens known to work in this system disagree, which is a reason to
-rebuild the rubric rather than to run it.
-
-- **Positive controls** (`resources/controls/positive_controls.tsv`): P0,
-  my32/akirin, peroxiredoxin, two heme peroxidases, the Bm86 ortholog. These
-  must surface in the top tier. **The literature stage is blinded for this
-  test** — if the model can read that P0 was used in a trial, a high score
-  proves nothing.
-- **Negative controls**: salmon proteins must be rejected by cross-reactivity
-  and intracellular housekeeping proteins by exposure. Being rejected for the
-  *wrong* reason counts as a failure.
-- **Robustness**: weight perturbation and leave-one-source-out. Candidates
-  that hold across all variants go to the bench; ones depending entirely on a
-  single source are labelled `single_source_dependent` in their dossier
-  rather than ranked quietly alongside the robust ones.
-
-## Known limits
-
-- **Epitope prediction is calibrated on mammals.** Salmon IgM/IgT biology
-  differs enough that these scores are weak evidence. This is the softest
-  axis in the rubric and the one most likely to be wrong.
-- **The concealed-antigen mechanism may not transfer.** Ticks ingest a large
-  blood meal; lice feed on mucus, skin and blood in smaller continuous
-  amounts, and how much intact host immunoglobulin reaches the louse gut is
-  not well established.
-- **Durability may be a delivery problem, not an antigen problem.** If decay
-  is driven by adjuvant and memory rather than antigen choice, a
-  better-chosen antigen decays the same way and the screen optimised the
-  wrong variable.
-- **Annotation quality limits everything downstream.** A large fraction of
-  gene models are hypothetical proteins. Uncertainty is carried forward as
-  flags rather than silently scored as zero.
-
-## Open decisions
-
-See `docs/decisions.md`. Two of them change the build.
+The symbiont arm remains exploratory. Its MAG gate checks quality alongside
+prevalence and genomic signatures; those signatures do not prove vertical
+transmission or obligate dependence. MAG assembly is not implemented.
