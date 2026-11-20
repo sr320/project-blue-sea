@@ -1,12 +1,33 @@
 # Each control must be dropped, and by the named step. Being dropped for the
 # wrong reason is a failure: a salmon protein rejected by the exposure filter
 # tells us nothing about whether the cross-reactivity filter works.
-protein_id	class	expected_drop_step	rationale
-SSAL_ACTB	host_spike	host_similarity	Salmon beta-actin; must be rejected as host-identical
-SSAL_TUBA	host_spike	host_similarity	Salmon alpha-tubulin; must be rejected as host-identical
-SSAL_GAPDH	host_spike	host_similarity	Salmon GAPDH; must be rejected as host-identical
-SSAL_HSP70	host_spike	host_similarity	Salmon HSP70; highly conserved, must still be rejected
-LSAL_RPL7	housekeeping	exposure	Louse cytoplasmic ribosomal protein; no secretion signal
-LSAL_EF1A	housekeeping	exposure	Louse elongation factor 1-alpha; cytoplasmic
-LSAL_HISTH3	housekeeping	exposure	Louse histone H3; nuclear, no route to host antibody
-LSAL_PROTEASOME_B1	housekeeping	exposure	Louse 20S proteasome subunit; cytoplasmic
+#
+# protein_id values are accessions in GCF_016086655.4 (UVic_Lsal_1.4),
+# established by aligning a UniProt reference against that proteome. RefSeq
+# names L7 "large ribosomal subunit protein uL30", so annotation text does not
+# find it. Reproduce with scripts/map_controls.py.
+protein_id	class	expected_drop_step	mapped_from	identity_pct	coverage	rationale
+XP_040576346.1	housekeeping	exposure	C1BTB6	100.0	1.00	Louse cytoplasmic ribosomal protein L7; no secretion signal
+XP_040583615.1	housekeeping	exposure	A7TZ68	89.1	1.00	Louse elongation factor 1-alpha; cytoplasmic
+XP_040571908.1	housekeeping	exposure	C1BSB6	97.8	1.00	Louse histone H3.3A; nuclear, no route to host antibody. Identical paralogs at XP_040571912.1 and XP_040575571.1
+XP_040579451.1	housekeeping	exposure	C1BVW5	100.0	1.00	Louse 20S proteasome subunit beta type-1; cytoplasmic
+#
+# HOST SPIKES -- disabled, because the benchmark cannot see them.
+#
+# The four salmon proteins this file used to list could never have been
+# scored. `cmd_benchmark` builds its record set from config["species"], which
+# is lsal and crog; salmon is config["host"] and has no cascaded.json. So a
+# salmon accession here matches no record, contributes no row, and
+# negative_control_report returns passed=False on an empty list.
+#
+# Making them work needs a spike-in: the named salmon proteins appended to the
+# louse proteome for a benchmark run, as tests/test_cli_end_to_end.py does
+# synthetically. That is a workflow change, not an id change, so these stay
+# off until it exists. Until then the cross-reactivity filter is unverified by
+# the negative controls -- it is still exercised by the cascade itself, but
+# nothing here proves it rejects what it should.
+#
+# SSAL_ACTB  host_spike  host_similarity  Salmon beta-actin
+# SSAL_TUBA  host_spike  host_similarity  Salmon alpha-tubulin
+# SSAL_GAPDH host_spike  host_similarity  Salmon GAPDH
+# SSAL_HSP70 host_spike  host_similarity  Salmon HSP70; highly conserved

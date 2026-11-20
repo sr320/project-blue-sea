@@ -105,11 +105,45 @@ MAG assembly track that does not exist yet. The tools are pinned in
 `workflow/envs/environment.yml`; the rules are not written. `snakemake all`
 does not depend on it.
 
-## The control sets are still placeholders
+## The control sets
 
-`resources/controls/*.tsv` use symbolic ids — `LSAL_P0`, `SSAL_ACTB` — not
-accessions from any proteome. Nothing matches them, so
-`positive_control_report` recovers nothing and `negative_control_report`
-returns `passed: False` on an empty list: **the gate fails by construction
-until these are mapped.** Map them once `provision` has put the proteomes on
-disk, by searching each control's sequence against the relevant proteome.
+Mapped to `GCF_016086655.4` accessions by alignment, not by annotation text:
+
+```bash
+pip install -e '.[curation]'
+python scripts/map_controls.py resources/reference/lsal/proteins.faa
+```
+
+Annotation text does not work here. RefSeq names P0 "large ribosomal subunit
+protein uL10" and L7 "uL30", so neither is findable under the name the
+literature uses, while two unrelated proteins are both named "peroxiredoxin 2"
+and only alignment says which is the published antigen. The script fetches a
+UniProt reference per control, aligns it, and prints identity and coverage so
+every assignment can be re-checked.
+
+Five of eight positives and all four louse negatives resolved at ≥89% identity
+over full-length coverage. Three positives did not and are commented out
+rather than guessed, so the gate measures only what actually resolves:
+
+- **bm86-like** — best alignment to the canonical Bm86 (`P20736`) is 28.8%
+  identity over 79% coverage, to "protein crumbs". That is twilight-zone
+  similarity between two EGF-repeat proteins, not orthology. Whether
+  *L. salmonis* has a Bm86 ortholog at all needs a phylogenetic analysis, not
+  a best-hit search.
+- **hpx1** — no "heme peroxidase 1" exists in this proteome or in UniProt for
+  this species, only hpx2.
+- **kcc-transporter** — matches 84 transporters by name, no UniProt reference.
+
+### The host-spike negatives cannot run
+
+The four salmon proteins were never scorable. `cmd_benchmark` builds its
+record set from `config["species"]` — lsal and crog — and salmon is
+`config["host"]`, with no `cascaded.json`. A salmon accession matches no
+record, contributes no row, and `negative_control_report` returns
+`passed: False` on an empty list.
+
+Fixing it needs a spike-in — the named salmon proteins appended to the louse
+proteome for a benchmark run, which `tests/test_cli_end_to_end.py` does
+synthetically — so it is a workflow change, not an id change. Until then the
+cross-reactivity filter is exercised by the cascade but unverified by the
+negative controls.
