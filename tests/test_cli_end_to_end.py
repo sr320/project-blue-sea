@@ -235,6 +235,38 @@ def test_disabling_the_prefilter_forwards_everything(workspace: Path):
     assert "epitope" in steps and "expression" in steps
 
 
+def test_a_broken_gene_join_is_loud(capsys):
+    """Expression and RNAi join on gene_id. NCBI protein.faa carries no
+    [gene=] tag, so a table keyed on anything but the protein accession joins
+    nothing -- and essentiality, the heaviest criterion, silently goes flat."""
+    from bluesea.cli import _report_joins
+
+    _report_joins(10, [("rnai", {"LOC121131766": {}}, 0)])
+    captured = capsys.readouterr()
+    assert "rnai: 0/10 joined (0.0%)" in captured.out
+    assert "no record joined to the rnai table" in captured.err
+
+
+def test_a_working_gene_join_is_quiet(capsys):
+    from bluesea.cli import _report_joins
+
+    _report_joins(10, [("expression", {"g1": {}}, 7)])
+    captured = capsys.readouterr()
+    assert "expression: 7/10 joined (70.0%)" in captured.out
+    assert captured.err == ""
+
+
+def test_an_absent_table_is_not_a_broken_join(capsys):
+    """crog has `rnai: null` -- no resource published. That is a documented
+    absence, not a join that failed, and must not raise the alarm."""
+    from bluesea.cli import _report_joins
+
+    _report_joins(10, [("rnai", {}, 0)])
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
 def test_dry_run_reports_projected_spend_without_calling(workspace: Path, capsys):
     run(workspace, "prefilter", "--species", "lsal")
     run(workspace, "assemble", "--species", "lsal")

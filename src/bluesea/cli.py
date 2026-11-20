@@ -176,7 +176,7 @@ def cmd_assemble(args: argparse.Namespace) -> int:
     # and must still pick up its expression and RNAi evidence.
     enabled = config["cascade"].get("prefilter", {}).get("enabled", True)
 
-    enriched = 0
+    enriched = joined_expression = joined_rnai = 0
     for record in records:
         if enabled and not record.survived:
             continue
@@ -185,16 +185,49 @@ def cmd_assemble(args: argparse.Namespace) -> int:
             host_hits.get(record.protein_id, []), record.length
         )
         record.expression = expression.get(record.gene_id, {})
+        joined_expression += bool(record.expression)
         if record.gene_id in rnai:
             record.rnai.phenotype = rnai[record.gene_id]["phenotype"]
             record.rnai.source = rnai[record.gene_id]["source"]
             record.rnai.note = rnai[record.gene_id]["note"]
+            joined_rnai += 1
         enriched += 1
 
     out = _records_path(paths, args.species, "assembled")
     _save_records(records, out)
     print(f"assembled {enriched} candidates of {len(records)} proteins -> {out}")
+    _report_joins(
+        enriched,
+        [("expression", expression, joined_expression), ("rnai", rnai, joined_rnai)],
+    )
     return 0
+
+
+def _report_joins(
+    enriched: int, tables: list[tuple[str, dict[str, Any], int]]
+) -> None:
+    """Say how much of each gene-keyed table actually matched.
+
+    Expression and RNAi join on `gene_id`, which comes from the `[gene=...]`
+    tag in the FASTA header -- a tag NCBI `protein.faa` files do not carry, so
+    `_gene_of` falls back to the protein accession. If the tables are keyed on
+    anything else, nothing joins: every protein scores `untested` on
+    essentiality, the heaviest criterion in the rubric, and the run completes
+    looking healthy. A zero join rate has to be loud.
+    """
+    for name, table, joined in tables:
+        if not table:
+            continue
+        rate = joined / enriched if enriched else 0.0
+        print(f"  {name}: {joined}/{enriched} joined ({rate:.1%})")
+        if joined == 0:
+            print(
+                f"\nWARNING: no record joined to the {name} table. Its keys do "
+                f"not match the gene ids taken from the proteome headers, so "
+                f"this evidence is being silently dropped. See "
+                f"docs/reference-data.md.",
+                file=sys.stderr,
+            )
 
 
 def _read_id_list(path: Path) -> set[str]:

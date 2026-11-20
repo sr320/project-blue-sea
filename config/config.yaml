@@ -11,11 +11,19 @@ paths:
   cache: "cache/llm"                 # API response cache, durable
   logs: "logs"
 
+# `accession` and `assembly` together form the NCBI FTP path the download rule
+# builds, so they have to be the matching pair for one release -- the config
+# previously named UVic_Lsal_1.0 alongside GCA_016086655.3, which is 1.2.
+#
+# L. salmonis is RefSeq (GCF) rather than GenBank (GCA) on purpose: no
+# GCA_016086655.x version carries an annotation, so none of them has a
+# proteome to screen. GCF_016086655.4 is the RefSeq annotation of the same
+# UVic assembly line, 19,574 protein-coding genes.
 species:
   lsal:
     label: "Lepeophtheirus salmonis"
-    assembly: "UVic_Lsal_1.0"
-    accession: "GCA_016086655.3"
+    assembly: "UVic_Lsal_1.4"
+    accession: "GCF_016086655.4"
     proteome: "lsal/proteins.faa"
     gff: "lsal/annotation.gff3"
     expression: "lsal/stage_tpm.tsv"       # gene_id x life stage, TPM
@@ -31,6 +39,7 @@ species:
 
 host:
   label: "Salmo salar"
+  assembly: "Ssal_v3.1"
   accession: "GCF_905237065.1"
   proteome: "ssal/proteins.faa"
 

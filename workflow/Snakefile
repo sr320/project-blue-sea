@@ -32,6 +32,40 @@ SHARDS = [f"{i:03d}" for i in range(1, N_SHARDS + 1)]
 
 CONTAINER = "containers/bluesea.sif"
 
+# Every proteome the run needs, keyed by the directory it lands in. The host
+# is in its own config section but is fetched and indexed exactly like the
+# louse proteomes, so it joins them here.
+HOST_DIR = os.path.dirname(config["host"]["proteome"])
+GENOMES = {
+    name: (cfg["accession"], cfg["assembly"])
+    for name, cfg in config["species"].items()
+}
+GENOMES[HOST_DIR] = (config["host"]["accession"], config["host"]["assembly"])
+
+
+def ncbi_prefix(genome: str) -> str:
+    """The NCBI FTP path for an assembly, up to the shared filename stem.
+
+    Accession and assembly name both appear in the path, so a mismatched pair
+    in config fails here with a 404 rather than silently fetching nothing.
+    """
+    accession, assembly = GENOMES[genome]
+    bank, digits = accession.split("_")
+    digits = digits.split(".")[0]
+    triples = "/".join(digits[i : i + 3] for i in range(0, 9, 3))
+    stem = f"{accession}_{assembly}"
+    return f"https://ftp.ncbi.nlm.nih.gov/genomes/all/{bank}/{triples}/{stem}/{stem}"
+
+
+# Without these, {a}_vs_{b}.tsv can split at the wrong underscore and the
+# genome wildcard can swallow a path separator.
+wildcard_constraints:
+    species="|".join(config["species"]),
+    genome="|".join(GENOMES),
+    a="|".join(config["species"]),
+    b="|".join(config["species"]),
+    shard=r"\d+",
+
 # `literature` is the one rule that needs outbound network. Declaring it local
 # keeps it off SLURM entirely: it runs on the host that invoked snakemake, a
 # login node with outbound access, while every other rule is submitted to
@@ -44,6 +78,7 @@ CONTAINER = "containers/bluesea.sif"
 # does not belong on a shared login node.
 localrules:
     literature,
+    download_proteome,
     merge_topology,
     merge_candidate_predictions,
 
@@ -60,6 +95,63 @@ rule gate:
     known-working antigens on deterministic evidence alone."""
     input:
         f"{RESULTS}/benchmark.json",
+
+
+rule provision:
+    """Everything the run needs that can be fetched or built unattended.
+
+    Not everything can. The expression matrices and the RNAi phenotype table
+    come from LiceBase and the literature, not NCBI, and the container is
+    built by scripts/build_container.sh because it cannot be built from
+    inside itself. See docs/reference-data.md.
+    """
+    input:
+        expand(f"{REFERENCE}/{{genome}}/proteins.faa", genome=GENOMES),
+        expand(f"{REFERENCE}/{{genome}}/{{genome}}.dmnd", genome=GENOMES),
+
+
+# ---------------------------------------------------------------------------
+# Stage 0 -- reference data
+# ---------------------------------------------------------------------------
+
+
+rule download_proteome:
+    """Fetch one proteome from the NCBI assembly FTP.
+
+    Local rule: it is network-bound, not compute-bound, and compute nodes are
+    not assumed to have outbound access -- the same reason the literature
+    stage runs here.
+    """
+    output:
+        f"{REFERENCE}/{{genome}}/proteins.faa",
+    params:
+        url=lambda wc: f"{ncbi_prefix(wc.genome)}_protein.faa.gz",
+    retries: 3
+    shell:
+        """
+        curl -fsSL --retry 3 --retry-delay 5 -o {output}.gz {params.url}
+        gunzip -c {output}.gz > {output}
+        rm -f {output}.gz
+        """
+
+
+rule diamond_db:
+    input:
+        f"{REFERENCE}/{{genome}}/proteins.faa",
+    output:
+        f"{REFERENCE}/{{genome}}/{{genome}}.dmnd",
+    params:
+        # DIAMOND appends .dmnd itself; handing it the full name would make
+        # <genome>.dmnd.dmnd and the rule would fail on a missing output.
+        base=lambda wc: f"{REFERENCE}/{wc.genome}/{wc.genome}",
+    threads: 4
+    resources:
+        mem_mb=16000,
+        runtime=60,
+    container:
+        CONTAINER
+    shell:
+        "diamond makedb --in {input} -d {params.base} --threads {threads}"
 
 
 # ---------------------------------------------------------------------------
