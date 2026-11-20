@@ -164,6 +164,26 @@ controls:
 
 Build the benchmark before the first full run.
 
+Before even that, ask whether the gate can pass at all — it costs nine
+proteins rather than 37,700:
+
+```bash
+python scripts/control_smoke_test.py     # extracts the controls
+# run signalp6 and DeepTMHMM on the FASTA it writes, then:
+python scripts/control_smoke_test.py     # verdicts, non-zero if unreachable
+```
+
+Three of the five mapped positive controls — P0, akirin and peroxiredoxin —
+are intracellular proteins, and the exposure filter exists to drop proteins
+with no route to host antibody. If it drops them they never reach the
+ranking, `recovered_fraction` is capped below its threshold, and the gate
+fails however good the ranking is. That is decided by the first three cascade
+steps, which need only SignalP and DeepTMHMM, so it is answerable in minutes.
+
+A failure there is a finding, not a crash: it says the exposure axis and the
+only antigens known to work in this system disagree, which is a reason to
+rebuild the rubric rather than to run it.
+
 - **Positive controls** (`resources/controls/positive_controls.tsv`): P0,
   my32/akirin, peroxiredoxin, two heme peroxidases, the Bm86 ortholog. These
   must surface in the top tier. **The literature stage is blinded for this
