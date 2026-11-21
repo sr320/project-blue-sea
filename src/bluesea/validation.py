@@ -261,6 +261,23 @@ def leave_one_source_out(
     baseline = rank(copy.deepcopy(records), weights_cfg)
     baseline_tier = {r.protein_id for r in top_tier(baseline, fraction)}
 
+    # A source that scores every record identically cannot reorder anything
+    # when it is dropped, so its removal hands back the baseline tier intact
+    # and the policy downstream reads that as perfect stability. It means the
+    # opposite: the source carries no evidence to depend on. Count the
+    # distinct scores each one produces, so an unconfigured evidence table
+    # shows up as absence rather than as robustness.
+    informativeness: dict[str, dict[str, Any]] = {}
+    for source in sources:
+        criteria = sorted(SOURCE_CRITERIA.get(source, set()))
+        distinct = {c: len({r.scores.get(c) for r in baseline}) for c in criteria}
+        informativeness[source] = {
+            "criteria": criteria,
+            "distinct_scores": distinct,
+            # An unknown source name drops nothing, so it is uninformative too.
+            "informative": any(n > 1 for n in distinct.values()),
+        }
+
     per_source: dict[str, list[str]] = {}
     for source in sources:
         dropped = SOURCE_CRITERIA.get(source, set())
@@ -282,6 +299,7 @@ def leave_one_source_out(
         "per_source_top_tier": per_source,
         "robust": sorted(robust),
         "fragile": fragile,
+        "source_informativeness": informativeness,
     }
 
 
@@ -379,14 +397,28 @@ def sensitivity_verdict(perturbation, loso, cfg):
     robust_fraction = len(loso["robust"]) / size if size else 0.0
     minimum_stability = cfg.get("min_mean_stability", 0.8)
     minimum_robust = cfg.get("min_robust_fraction", 0.5)
+    # Leave-one-source-out is only a test for a source that varies. Removing a
+    # constant reorders nothing, so a source with no evidence behind it would
+    # otherwise score a perfect and meaningless pass -- and would do so most
+    # convincingly exactly where there is nothing to be confident about.
+    uninformative = sorted(
+        source
+        for source, info in loso.get("source_informativeness", {}).items()
+        if not info["informative"]
+    )
     return {
         "passed": bool(size)
+        and not uninformative
         and perturbation["mean_stability"] >= minimum_stability
         and robust_fraction >= minimum_robust,
         "mean_stability": perturbation["mean_stability"],
         "min_mean_stability": minimum_stability,
         "robust_top_tier_fraction": robust_fraction,
         "min_robust_fraction": minimum_robust,
+        "uninformative_sources": uninformative,
+        "uninformative_policy": "A configured source that scores every record "
+        "identically is reported as absent evidence, not as stability, and "
+        "fails the verdict rather than passing it vacuously.",
         "scope": "Weight and score-source sensitivity among survivors; "
         "does not test filter false negatives.",
     }

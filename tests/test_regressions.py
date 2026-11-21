@@ -157,3 +157,71 @@ def test_signalp_cleavage_is_respected_when_topology_disagrees():
     record.epitopes = [Epitope(21, 30, 0.9), Epitope(40, 55, 0.9)]
     assert [e.start for e in record.accessible_epitopes()] == [40]
     assert construct_boundary(record) == (26, 100)
+
+
+def test_empty_evidence_source_reads_as_absence_not_stability(config, weights):
+    """Leave-one-source-out tests a source by removing it. A source with no
+    table scores every record alike, so removing it reorders nothing and the
+    policy sees a flawless result -- most convincingly where there is nothing
+    to be confident about. It has to read as missing evidence instead."""
+    records = [
+        make_record(f"P_{i}", seed=300 + i, stages={}, rnai="untested")
+        for i in range(10)
+    ]
+    report = validation.leave_one_source_out(
+        records, weights, ["rnai", "expression"], fraction=0.5
+    )
+
+    informativeness = report["source_informativeness"]
+    assert informativeness["rnai"]["informative"] is False
+    assert informativeness["expression"]["informative"] is False
+    # Every record scored identically on the criteria each source feeds.
+    assert informativeness["rnai"]["distinct_scores"] == {"essentiality": 1}
+    assert informativeness["expression"]["distinct_scores"] == {
+        "expression_breadth": 1
+    }
+    # The trap itself: dropping a constant leaves the tier untouched, so the
+    # old report would have called both sources perfectly robust.
+    assert set(report["per_source_top_tier"]["rnai"]) == set(
+        report["baseline_top_tier"]
+    )
+    assert report["fragile"] == []
+
+    verdict = validation.sensitivity_verdict(
+        {"mean_stability": 1.0}, report, config["validation"]["robustness"]
+    )
+    assert verdict["uninformative_sources"] == ["expression", "rnai"]
+    assert verdict["passed"] is False
+
+
+def test_varying_evidence_source_does_not_trip_the_guard(config, weights):
+    records = [
+        make_record(f"P_{i}", seed=400 + i, rnai=phenotype)
+        for i, phenotype in enumerate(
+            ["lethal", "no_phenotype", "untested", "moulting_defect"] * 3
+        )
+    ]
+    report = validation.leave_one_source_out(
+        records, weights, ["rnai"], fraction=0.5
+    )
+    assert report["source_informativeness"]["rnai"]["informative"] is True
+
+    verdict = validation.sensitivity_verdict(
+        {"mean_stability": 0.95}, report, config["validation"]["robustness"]
+    )
+    assert verdict["uninformative_sources"] == []
+
+
+def test_unknown_source_name_drops_nothing_and_is_caught(config, weights):
+    """A typo in the configured source list silently removed no criteria."""
+    records = [make_record(f"P_{i}", seed=500 + i) for i in range(6)]
+    report = validation.leave_one_source_out(
+        records, weights, ["rnia"], fraction=0.5
+    )
+    assert report["source_informativeness"]["rnia"]["criteria"] == []
+    assert report["source_informativeness"]["rnia"]["informative"] is False
+
+    verdict = validation.sensitivity_verdict(
+        {"mean_stability": 1.0}, report, config["validation"]["robustness"]
+    )
+    assert verdict["passed"] is False

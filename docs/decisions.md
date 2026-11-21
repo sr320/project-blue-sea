@@ -35,7 +35,12 @@
 - [ ] Decide how to handle experimental components rejected by exposure using
       localization evidence. Do not change the policy solely to recover controls.
 - [ ] Supply curated stage TPM/RNAi tables keyed to the configured annotation.
-      Current defaults are explicit missing evidence.
+      Current defaults are explicit missing evidence. Both are null, so
+      essentiality (weight 20) and expression_breadth (weight 10) score a
+      constant for every protein, and literature (weight 10) is blinded in the
+      benchmark: 40 of 100 points carry no signal in a gate run. The
+      sensitivity verdict now fails on those sources rather than reporting
+      them as perfectly stable, so the gate states this instead of hiding it.
 - [ ] Establish wet-lab collaborators for localization, antibody function,
       recombinant expression and longitudinal challenge experiments.
 - [ ] Set and document live API spending policy before enabling sourced calls.
