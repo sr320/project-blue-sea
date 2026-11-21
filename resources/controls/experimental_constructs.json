@@ -1,132 +1,447 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "studies": [
+    {
+      "study_doi": "10.3389/fimmu.2025.1570948",
+      "citation": "Rodriguez A, Gadan K, Perez L, Evensen O, Estrada MP, Carpio Y. Prime-boost vaccination with chimeric antigens adjuvanted in Montanide ISA50 V2 confers protection against experimental Lepeophtheirus salmonis infestation in Atlantic salmon (Salmo salar L.). Front Immunol. (2025) 16:1570948.",
+      "source_url": "https://www.frontiersin.org/journals/immunology/articles/10.3389/fimmu.2025.1570948/full",
+      "license": "CC BY",
+      "published": "2025-05-21",
+      "received": "2025-02-04",
+      "accepted": "2025-04-30",
+      "erratum": "none found on the article page as of 2026-11-20",
+      "timeline_source": "Table 2 and Section 2.8.2; week 1 is defined as the first injection",
+      "timeline_study_weeks": {
+        "prime": 1,
+        "boost": 4,
+        "challenge_1": 7,
+        "count_1a": 9,
+        "count_1b": 12,
+        "delouse_1": 18,
+        "challenge_2": 19,
+        "count_2": 25,
+        "delouse_2": 26,
+        "challenge_3": 44,
+        "count_3": 51
+      },
+      "timing_conflicts": [
+        {
+          "id": "month_labels_vs_weeks",
+          "status": "unresolved",
+          "paper_statements": [
+            "Abstract: challenges 'at 2, 5, and 11 months post-prime vaccination'",
+            "Introduction: '2-, 5- and 11-months post-vaccination' (no prime/boost qualifier)",
+            "Section 3.3: week 44 'corresponded to 11 months post-boosted vaccination'"
+          ],
+          "derived_observation": "NOT STATED BY THE PAPER. Measured from the week 1 prime, the challenges fall at 6, 18 and 43 weeks (about 1.4, 4.1 and 9.9 months); from the week 4 boost, at 3, 15 and 40 weeks. Neither anchor yields 2, 5 and 11 for any challenge.",
+          "derived_hypothesis": "NOT STATED BY THE PAPER. Months elapsed from the week 1 prime to each COUNTING date, truncated to whole months, give exactly 2, 5 and 11 (weeks 12, 25 and 51 are 2.53, 5.52 and 11.50 months). Under this reading the Abstract's labels describe count dates rather than challenge dates, and Section 3.3's 'post-boosted' is the inconsistent statement. This is arithmetic agreement only and must be confirmed with the authors before any field is populated from it."
+        },
+        {
+          "id": "figure5_dpc_vs_table2",
+          "status": "unresolved",
+          "paper_statements": [
+            "Figure 5 caption: 'Third challenge was done at study week 44. Sea lice counts were done 32 days after challenge.'",
+            "Section 3.3 and Table 2: counting at experimental week 51"
+          ],
+          "derived_observation": "NOT STATED BY THE PAPER. Week 44 to week 51 is 49 days, not 32. For the other two challenges the stated dpc sits within 3 days of the Table 2 interval (week 7 to 12 is 35 days, stated 32 dpc; week 19 to 25 is 42 days, stated 40 dpc), whereas this one is 17 days off and is numerically identical to the 32 dpc in the Figure 3 caption. A caption transcription error is plausible but unconfirmed."
+        }
+      ],
+      "notes": "Both registered constructs come from this single study and share its controls, timeline and comparators. They are not independent replications of each other. Reference 17 of this paper (Swain JK et al., PLoS One (2020) 15:e0239827, doi 10.1371/journal.pone.0239827) reports an earlier challenge study with a related candidate and is a lead for a genuinely independent second study; it has not been assessed."
+    },
+    {
+      "study_doi": "10.1016/j.fsi.2019.06.018",
+      "citation": "Leal Y, Velazquez J, Hernandez L, Swain JK, Rodriguez Rodriguez A, Martinez R, Garcia C, Ramos Y, Estrada MP, Carpio Y. Promiscuous T cell epitopes boosts specific IgM immune response against a P0 peptide antigen from sea lice in different teleost species. Fish Shellfish Immunol. (2019) 92:322-330.",
+      "role": "design source for the TT-P0 antigen; not an efficacy study",
+      "counts_as_benchmark_study": false,
+      "counts_as_benchmark_study_reason": "Measures IgM antibody titers in tilapia, African catfish and Atlantic salmon. It reports no lice challenge and no infestation endpoint, so it cannot serve as an independent benchmark study for construct recovery. Do not count it toward min_independent_studies.",
+      "copy_read": {
+        "version": "submittedVersion (author manuscript), as labelled in the NVA record",
+        "repository": "Norwegian Research Information Repository (NVA), Sikt",
+        "record_url": "https://nva.sikt.no/registration/0198cc428782-87f1b57c-407d-4f58-bc14-ce84a52274f8",
+        "handles": [
+          "https://hdl.handle.net/10037/17281",
+          "https://hdl.handle.net/11250/2640762"
+        ],
+        "file_name": "article.pdf",
+        "file_sha256": "8d0e6189582ca442eb62fc2109dac556d56746e3a1e329a03585310fb7741855",
+        "read_on": "2026-11-20",
+        "caveats": "This is the submitted manuscript, not the published version of record. Its body text has no extractable font mapping, so pages were read as rendered images. Table 1, which holds the cloning primers, is not part of this deposited file. Facts below should be re-checked against the published version before any record is marked verified."
+      },
+      "notes": "Section 2.1 of this manuscript is the only place that defines the TT-P0 antigen. It names both T-cell epitopes with explicit sequences and states the P0 residue range, which the 2025 study omits. Reference [14] of this manuscript is the source of the pMOS-Blue-P0 clone: 'Carpio Y, Purcell S, Takizawa F, Leal Y, Velazquez J, Hay TJ, Poley JD, Braden LM, Garcia C, Basabe L, Sunyer JO, Fast MD, Estrada MP. Novel chimeric antigen reduced adult sea louse Lepeophtheirus salmonis infestations under different prime-boost vaccination strategies. Submitted to Scientific Reports 2018.' That work is a sea louse challenge study and is a second lead for an independent benchmark; its published form has not been located."
+    }
+  ],
   "constructs": [
     {
       "construct_id": "Rodriguez2025_P0_my32",
       "study_doi": "10.3389/fimmu.2025.1570948",
       "source_url": "https://www.frontiersin.org/journals/immunology/articles/10.3389/fimmu.2025.1570948/full",
-      "source_location": "Methods 2.2; Results 3.3 and Figures 3-5",
+      "source_location": "Methods 2.2; Results 3.1 and 3.3; Figures 3-5; Table 1",
       "species": "lsal",
       "host": "Salmo salar",
-      "construct_description": "L. salmonis P0 residues 267-301 fused to my32-Ls, with a C-terminal His tag",
+      "construct_description": "A 35 aa L. salmonis P0 peptide spanning residues 267-301 at the N-terminus, with the my32-Ls antigen fused at the C-terminus of that peptide, carrying a fused C-terminal histidine tail.",
+      "design_references": [
+        {
+          "role": "my32-Ls antigen",
+          "reference_number": 15,
+          "citation": "Carpio Y, Garcia C, Pons T, Haussmann D, Rodriguez-Ramos T, Basabe L, et al. Akirins in sea lice: first steps towards a deeper understanding. Exp Parasitol. (2013) 135:188-99.",
+          "doi": "10.1016/j.exppara.2013.06.018",
+          "contains_construct_sequence": "unknown; not assessed"
+        },
+        {
+          "role": "P0 cDNA template, previously cloned in pMOS-Blue",
+          "reference_number": 16,
+          "citation": "Leal Y, Velazquez J, Hernandez L, Swain JK, Rodriguez AR, Martinez R, et al. Promiscuous T cell epitopes boosts specific IgM immune response against a P0 peptide antigen from sea lice in different teleost species. Fish Shellfish Immunol. (2019) 92:322-30.",
+          "doi": "10.1016/j.fsi.2019.06.018",
+          "contains_construct_sequence": "unknown; not assessed"
+        }
+      ],
+      "expression": {
+        "vector": "pET28a",
+        "host_strain": "Escherichia coli BL21 (DE3)",
+        "tag": "C-terminal histidine tail",
+        "observed_mass_kda": 25,
+        "mass_basis": "estimated from amino acid sequence (Results 3.1)",
+        "purity_pct": 86,
+        "identity_evidence": "ESI-MS/MS of tryptic peptides (Supplementary Figure S2)"
+      },
       "louse_components": [
         {
           "name": "P0",
           "source_accession": "BT077866",
-          "source_region": "267-301 aa",
+          "source_region": "aa 267-301 (35 aa peptide)",
+          "source_quote": "the sequence coding for the 35 aa P0 peptide between the amino acids 267 to 301 from L. salmonis P0 was amplified first",
+          "corroboration": "Leal et al. 2019 Section 2.1 independently states the same 267-301 range for the P0 peptide in TT-P0, and names pMOS-Blue-P0 as the shared template. Both constructs therefore carry the same P0 fragment, which is why neither is an independent positive control for the other.",
+          "cloning_primers": [
+            {
+              "name": "E",
+              "direction": "forward",
+              "sequence": "CCATGGAATATCTGGCTGATCCCA",
+              "restriction_site": "NcoI (per Methods 2.2; Table 1 marks sites by underlining only)"
+            },
+            {
+              "name": "F",
+              "direction": "reverse",
+              "sequence": "GGATCCCTCAGGTTCATCCGCCTTAG",
+              "restriction_site": "BamHI (per Methods 2.2)"
+            }
+          ],
+          "derived_fragment": {
+            "sequence": "EYLADPSKFASVAAAPAAGATKAAAAAPAKADEPE",
+            "length_aa": 35,
+            "derivation": "NOT PRINTED IN EITHER PAPER. Translated from the BT077866 CDS and sliced at residues 267-301, 1-based inclusive. The stated range yields exactly 35 aa, as both papers claim.",
+            "annotation_match": "Exact substring of XP_040578982.1 at residues 267-301, the same coordinates. The clone translation and the RefSeq protein are both 314 aa and differ at exactly one residue, 263 (clone E, RefSeq Q), which lies outside the fragment, so the vaccine peptide is identical in both.",
+            "primer_confirmation": "Both cloning primers independently confirm the boundaries. Primer E read from the ATG inside its NcoI site translates to MEYLADP, matching the fragment start with an added initiator Met. Primer F reverse-complemented and read in frame 2 translates to KADEPE, matching the fragment end.",
+            "derived_on": "2026-11-20",
+            "caveat": "This locates the fragment in the configured annotation. It is not the administered construct sequence, which still lacks its linkers and tag."
+          },
           "mapped_accessions": [
             "XP_040578982.1"
           ],
-          "mapping_status": "fragment_mapping_pending"
+          "mapping_status": "verified"
         },
         {
           "name": "my32",
           "source_accession": "ADD38399",
-          "source_region": "my32-Ls insert; exact fusion sequence requires confirmation",
+          "source_region": "my32-Ls insert, cloned at the C-terminal of the P0 peptide; exact fragment boundaries not stated in the paper",
+          "source_quote": "my32 was amplified with primers G and H ... to allow my32-Ls insertion at the C-terminal of P0 peptide in the pET28 expression vector",
+          "cloning_primers": [
+            {
+              "name": "G",
+              "direction": "forward",
+              "sequence": "GGATCCGCTTGTGTTACTCTTAAACGTCC",
+              "restriction_site": "BamHI (per Methods 2.2)"
+            },
+            {
+              "name": "H",
+              "direction": "reverse",
+              "sequence": "AAGCTTATAACTCGGAGTTTGGGAGTC",
+              "restriction_site": "HindIII (per Methods 2.2)"
+            }
+          ],
+          "derived_insert": {
+            "boundaries": "ADD38399.1 residues 2-178, 177 aa of 180",
+            "derivation": "NOT PRINTED IN THE PAPER. Primer G after its BamHI site translates to ACVTLKR, which is ADD38399.1 residues 2-8; primer H reverse-complemented translates to DSQTPSY, which is residues 172-178. The insert therefore omits the initiator Met and the final two residues, LS.",
+            "annotation_difference": "ADD38399.1 (Akirin-2, 2010) and all four mapped RefSeq accessions are 180 aa and differ at exactly one residue, 132 (ADD38399 Y, RefSeq C), which lies inside the 2-178 insert. The four RefSeq entries are identical to one another, which is why all four are listed. 99.4% identity.",
+            "derived_on": "2026-11-20"
+          },
           "mapped_accessions": [
             "XP_040572108.1",
             "XP_071746275.1",
             "XP_071746276.1",
             "XP_071746277.1"
           ],
-          "mapping_status": "construct_mapping_pending"
+          "mapping_status": "construct_mapping_pending",
+          "mapping_status_reason": "The insert boundaries are now derived and the annotation match is 99.4%, but the paper still does not state the P0-to-my32 junction or any linker, and the single Y132C difference from the administered 2010 sequence is unexplained. Both need settling before this is verified."
         }
       ],
       "formulation": "100 micrograms per fish; Montanide ISA50 V2; homologous prime-boost in freshwater",
       "endpoints": [
         {
-          "challenge_month_post_prime": 2,
-          "count_days_post_challenge": 32,
+          "challenge": 1,
+          "challenge_study_week": 7,
+          "count_study_week": 12,
+          "reported_days_post_challenge": 32,
           "endpoint": "lice count per fish",
           "comparator": "non-injected control",
-          "reduction_pct": 91
+          "reduction_pct": 91,
+          "p_value": "<0.0001",
+          "test": "Poisson regression",
+          "source": "Results 3.2"
         },
         {
-          "challenge_month_post_prime": 2,
-          "count_days_post_challenge": 32,
+          "challenge": 1,
+          "challenge_study_week": 7,
+          "count_study_week": 12,
+          "reported_days_post_challenge": 32,
           "endpoint": "lice count per fish",
           "comparator": "adjuvant control",
-          "reduction_pct": 84
+          "reduction_pct": 84,
+          "source": "Results 3.2"
         },
         {
-          "challenge_month_post_prime": 5,
-          "count_days_post_challenge": 40,
+          "challenge": 2,
+          "challenge_study_week": 19,
+          "count_study_week": 25,
+          "reported_days_post_challenge": 40,
           "endpoint": "lice count per fish",
           "comparator": "non-injected control",
-          "reduction_pct": 75.4
+          "reduction_pct": 75.4,
+          "p_value": "<0.0001",
+          "test": "Poisson regression",
+          "source": "Results 3.2"
         },
         {
-          "challenge_month_post_prime": null,
-          "count_days_post_challenge": null,
+          "challenge": 2,
+          "challenge_study_week": 19,
+          "count_study_week": 25,
+          "reported_days_post_challenge": 40,
+          "endpoint": "lice count per fish",
+          "comparator": "adjuvant control",
+          "reduction_pct": 69.3,
+          "p_value": "<0.0001",
+          "source": "Results 3.2"
+        },
+        {
+          "challenge": 3,
+          "challenge_study_week": 44,
+          "count_study_week": 51,
+          "reported_days_post_challenge": 32,
+          "days_post_challenge_disputed": true,
           "endpoint": "lice count per fish",
           "comparator": "non-injected control",
           "reduction_pct": 4.2,
-          "challenge_study_week": 44,
-          "count_study_week": 51,
-          "timing_uncertainty": "Abstract labels the late challenge 11 months post-prime; Methods says post-boost. Timeline weeks 44 to 51 imply 49 days; Figure 5 says 32 dpc. Retained as unresolved."
+          "source": "Abstract only; this value does not appear in Results 3.3",
+          "source_quote": "fading off at 12 months (4.2% reduction vs. control)",
+          "caveat": "The Abstract labels this point '12 months' while labelling the third challenge '11 months'. Results 3.3 reports no P0-my32 versus non-injected figure for this challenge. Treat as abstract-only and unconfirmed."
         }
       ],
       "sequence_file": null,
       "sequence_sha256": null,
       "curation_status": "sequence_pending",
-      "limitations": "One study; chimeric construct does not identify each component's independent efficacy. Late challenge used common-garden design. Challenge time and outcome-count time are different."
+      "curation_blockers": [
+        "The paper prints no amino acid or nucleotide sequence for the construct. Only PCR primers appear (Table 1). Supplementary Figures S2 and S3 are MS/MS identity confirmations, not sequences.",
+        "The supplementary file list could not be retrieved from the article page; whether any supplement carries a sequence is unknown.",
+        "Exact my32-Ls fragment boundaries are not stated; reference 15 has not been assessed for them.",
+        "No deposited construct sequence accession is given."
+      ],
+      "curation_next_steps": [
+        "DONE 2026-11-20: the P0 fragment was derived from BT077866, matched exactly to XP_040578982.1 at 267-301, and confirmed independently by primers E and F. See derived_fragment.",
+        "DONE 2026-11-20: the my32 insert was placed at ADD38399.1 residues 2-178 from primers G and H. See derived_insert. The P0-to-my32 junction and the Y132C annotation difference remain open.",
+        "Obtain reference 15 (doi 10.1016/j.exppara.2013.06.018) and check whether it prints the my32-Ls sequence and explains the Y132C difference.",
+        "Download the supplementary material directly and check for a sequence-bearing file.",
+        "If no printed sequence exists anywhere, request the administered sequence from the corresponding authors (oystein.evensen@nmbu.no, mario.pablo@cigb.edu.cu, yamila.carpio@cigb.edu.cu) before marking verified."
+      ],
+      "limitations": "One study; the chimeric construct does not identify each component's independent efficacy. Late challenge used a common-garden design. Challenge time and outcome-count time are different."
     },
     {
       "construct_id": "Rodriguez2025_TT_P0",
       "study_doi": "10.3389/fimmu.2025.1570948",
       "source_url": "https://www.frontiersin.org/journals/immunology/articles/10.3389/fimmu.2025.1570948/full",
-      "source_location": "Methods 2.2 refers to prior cloning study; Results 3.3 and Figures 3-5",
+      "source_location": "Introduction; Methods 2.2 cites reference 16 for the cloning; Results 3.1 and 3.3; Figures 3-5. Construct definition taken from Leal et al. 2019 Section 2.1.",
       "species": "lsal",
       "host": "Salmo salar",
-      "construct_description": "P0 peptide fused to tetanus-toxin-derived T-cell epitopes; exact sequence pending source/supplement curation",
+      "construct_description": "Two promiscuous T-cell epitopes at the N-terminus, one from tetanus toxin (tt P2) and one from the measles virus fusion protein (MVF), with a 35 aa L. salmonis P0 peptide spanning residues 267-301 fused at their C-terminus. Expressed from pET28a-TT-P0 with a His tag.",
+      "design_references": [
+        {
+          "role": "cloning and design of the TT-P0 antigen; the only design source the 2025 paper gives",
+          "reference_number": 16,
+          "citation": "Leal Y, Velazquez J, Hernandez L, Swain JK, Rodriguez AR, Martinez R, et al. Promiscuous T cell epitopes boosts specific IgM immune response against a P0 peptide antigen from sea lice in different teleost species. Fish Shellfish Immunol. (2019) 92:322-30.",
+          "doi": "10.1016/j.fsi.2019.06.018",
+          "source_quote": "Leal et al. described the cloning of TT-P0 antigen (16).",
+          "contains_construct_sequence": "No assembled construct sequence is printed, but Section 2.1 gives both T-cell epitope sequences verbatim and states the P0 residue range. Retrieved and read; see the studies entry for this DOI."
+        },
+        {
+          "role": "origin of the pMOS-Blue-P0 clone used as the P0 template",
+          "citation": "Carpio Y, Purcell S, Takizawa F, Leal Y, Velazquez J, Hay TJ, Poley JD, Braden LM, Garcia C, Basabe L, Sunyer JO, Fast MD, Estrada MP. Novel chimeric antigen reduced adult sea louse Lepeophtheirus salmonis infestations under different prime-boost vaccination strategies. Submitted to Scientific Reports 2018.",
+          "doi": null,
+          "status": "cited as submitted in 2019; published form not located"
+        }
+      ],
+      "tcell_epitopes": [
+        {
+          "name": "tt P2",
+          "source": "tetanus toxin",
+          "genbank": "X04436",
+          "source_residues": "830-844",
+          "sequence": "QYIKANSKFIGITEL",
+          "length_aa": 15,
+          "source_quote": "The tt P2 (830-844 QYIKANSKFIGITEL; GenBank X04436)",
+          "provenance": "Leal et al. 2019 Section 2.1, read from the submitted-version PDF"
+        },
+        {
+          "name": "MVF",
+          "source": "measles virus fusion protein",
+          "genbank": "M81903",
+          "source_residues": "288-302",
+          "sequence": "LSEIKGVIVHRLEGV",
+          "length_aa": 15,
+          "source_quote": "MVF protein (288-302 LSEIKGVIVHRLEGV; GenBank M81903)",
+          "provenance": "Leal et al. 2019 Section 2.1, read from the submitted-version PDF"
+        }
+      ],
+      "cloning": {
+        "tce_template": "plasmid 0807716_ttantigen-MVF_prote_pGA14, a GENEART synthetic gene",
+        "tce_primers": "A and B, carrying NcoI-HindIII restriction sites",
+        "p0_template": "pMOS-Blue-P0",
+        "p0_primers": "C and D, carrying XhoI-HindIII restriction sites",
+        "subcloning": "PCR fragments sub-cloned into pGEM-T-easy (Promega), released by endonuclease digestion, inserted into pET28a",
+        "final_vector": "pET28a-TT-P0",
+        "orientation": "P0 peptide fused to the C-terminal of the promiscuous T cell epitopes",
+        "inconsistency": "The manuscript assigns HindIII to both primer pairs (printed as 'Hind IIII' for the P0 pair), which cannot be right for a directional three-fragment assembly. Primer letters here are Leal et al.'s Table 1 and are NOT the same letters as Table 1 of the 2025 paper. Table 1 is absent from the deposited file, so the primer sequences could not be read. Resolve against the published version."
+      },
+      "expression": {
+        "vector": "pET28a (as pET28a-TT-P0), per Leal et al. 2019",
+        "host_strain": "Escherichia coli BL21 (DE3), per Leal et al. 2019",
+        "tag": "His tag, confirmed by western blotting (2025 Results 3.1); purified by IMAC under denaturing conditions",
+        "observed_mass_kda": 8.3,
+        "mass_basis": "expected molecular weight, agreeing with the observed band (2025 Results 3.1)",
+        "mass_cross_check": "NOT STATED BY EITHER PAPER. The three named parts total 65 aa (15 + 15 + 35), about 7.2 kDa, so 8.3 kDa leaves roughly 10 residues for the His tag and restriction-site linkers. Consistent, but not a substitute for the assembled sequence.",
+        "purity_pct": 91,
+        "identity_evidence": "MS/MS analysis (2025 Supplementary Figure S3)"
+      },
       "louse_components": [
         {
           "name": "P0",
           "source_accession": "BT077866",
-          "source_region": "exact TT-P0 insert requires original cloning reference",
+          "source_region": "aa 267-301 (35 aa peptide)",
+          "source_quote": "A 35 aa peptide between the amino acids 267 to 301 from L. salmonis P0 sequence was amplified from pMOS-Blue-P0",
+          "provenance": "Leal et al. 2019 Section 2.1. This resolves the range the 2025 paper left unstated, and confirms it is the same 267-301 fragment used in P0-my32. The earlier registry entry recorded this only as an unverified inference.",
+          "derived_fragment": {
+            "sequence": "EYLADPSKFASVAAAPAAGATKAAAAAPAKADEPE",
+            "length_aa": 35,
+            "derivation": "NOT PRINTED IN EITHER PAPER. Translated from the BT077866 CDS and sliced at residues 267-301, 1-based inclusive. Identical to the P0-my32 fragment, as expected from the shared pMOS-Blue-P0 template.",
+            "annotation_match": "Exact substring of XP_040578982.1 at residues 267-301, the same coordinates. The one clone-versus-RefSeq difference, residue 263, lies outside the fragment.",
+            "primer_confirmation": "NOT available for this construct. Leal et al.'s own primers C and D are in a Table 1 absent from the deposited manuscript. The boundaries were confirmed instead with primers E and F of the 2025 paper, which amplify the same 267-301 range from the same template for P0-my32.",
+            "derived_on": "2026-11-20",
+            "caveat": "This locates the fragment in the configured annotation. It is not the administered construct sequence, which still lacks its linkers and tag."
+          },
           "mapped_accessions": [
             "XP_040578982.1"
           ],
-          "mapping_status": "fragment_mapping_pending"
+          "mapping_status": "verified"
         }
       ],
       "formulation": "100 micrograms per fish; Montanide ISA50 V2; homologous prime-boost in freshwater",
       "endpoints": [
         {
-          "challenge_month_post_prime": 2,
-          "count_days_post_challenge": 32,
+          "challenge": 1,
+          "challenge_study_week": 7,
+          "count_study_week": 12,
+          "reported_days_post_challenge": 32,
           "endpoint": "lice count per fish",
           "comparator": "non-injected control",
-          "reduction_pct": 88
+          "reduction_pct": 88,
+          "p_value": "<0.0001",
+          "test": "Poisson regression",
+          "source": "Results 3.2"
         },
         {
-          "challenge_month_post_prime": 2,
-          "count_days_post_challenge": 32,
+          "challenge": 1,
+          "challenge_study_week": 7,
+          "count_study_week": 12,
+          "reported_days_post_challenge": 32,
           "endpoint": "lice count per fish",
           "comparator": "adjuvant control",
-          "reduction_pct": 77
+          "reduction_pct": 77,
+          "source": "Results 3.2"
         },
         {
-          "challenge_month_post_prime": 5,
-          "count_days_post_challenge": 40,
+          "challenge": 2,
+          "challenge_study_week": 19,
+          "count_study_week": 25,
+          "reported_days_post_challenge": 40,
           "endpoint": "lice count per fish",
           "comparator": "non-injected control",
-          "reduction_pct": 90.3
+          "reduction_pct": 90.3,
+          "p_value": "<0.0001",
+          "test": "Poisson regression",
+          "source": "Results 3.2"
         },
         {
-          "challenge_month_post_prime": null,
-          "count_days_post_challenge": null,
+          "challenge": 2,
+          "challenge_study_week": 19,
+          "count_study_week": 25,
+          "reported_days_post_challenge": 40,
+          "endpoint": "lice count per fish",
+          "comparator": "adjuvant control",
+          "reduction_pct": 88,
+          "p_value": "<0.0001",
+          "source": "Results 3.2"
+        },
+        {
+          "challenge": 3,
+          "challenge_study_week": 44,
+          "count_study_week": 51,
+          "reported_days_post_challenge": 32,
+          "days_post_challenge_disputed": true,
           "endpoint": "lice count per fish",
           "comparator": "non-injected control",
           "reduction_pct": 20,
+          "p_value": "0.005",
+          "test": "Poisson regression",
+          "source": "Results 3.3"
+        },
+        {
+          "challenge": 3,
           "challenge_study_week": 44,
           "count_study_week": 51,
-          "timing_uncertainty": "Abstract labels the late challenge 11 months post-prime; Methods says post-boost. Timeline weeks 44 to 51 imply 49 days; Figure 5 says 32 dpc. Retained as unresolved."
+          "reported_days_post_challenge": 32,
+          "days_post_challenge_disputed": true,
+          "endpoint": "lice count per fish",
+          "comparator": "adjuvant control",
+          "reduction_pct": 15.1,
+          "p_value": "0.05",
+          "source": "Results 3.3"
+        },
+        {
+          "challenge": 3,
+          "challenge_study_week": 44,
+          "count_study_week": 51,
+          "reported_days_post_challenge": 32,
+          "days_post_challenge_disputed": true,
+          "endpoint": "lice count per fish",
+          "comparator": "P0-my32 vaccinated group",
+          "reduction_pct": 15.8,
+          "p_value": "0.04",
+          "source": "Results 3.3",
+          "caveat": "A between-vaccine comparison, not a vaccine-versus-control effect."
         }
       ],
       "sequence_file": null,
       "sequence_sha256": null,
       "curation_status": "sequence_pending",
+      "curation_blockers": [
+        "No assembled TT-P0 amino acid sequence is printed in either paper. All three parts are now named with explicit sequences or an explicit residue range, but the linker residues contributed by the NcoI/XhoI/HindIII sites, the His tag and its position are not stated, so a single administered sequence still cannot be written down.",
+        "The 35 aa P0 peptide sequence itself is not printed; only the residue range 267-301 of BT077866.",
+        "Only the submitted version was readable. Table 1 of Leal et al. 2019, which holds the cloning primers, is not in the deposited file, and its stated restriction sites are internally inconsistent.",
+        "RESOLVED since the last revision: the epitope identities and sequences, the fusion orientation, the P0 residue range, the vector and the host strain. The earlier description named only tetanus toxin and left the P0 range unstated."
+      ],
+      "curation_next_steps": [
+        "DONE 2026-11-20: the P0 peptide was derived from BT077866 and matched exactly to XP_040578982.1 at 267-301. See derived_fragment.",
+        "Obtain the published version of record of Leal et al. 2019 for Table 1 and the restriction-site assignment, which the submitted manuscript reports inconsistently.",
+        "Assemble a candidate TT-P0 sequence from QYIKANSKFIGITEL + LSEIKGVIVHRLEGV + P0(267-301) plus the pET28a His tag and linkers, and test it against the 8.3 kDa expected mass. Treat any such assembly as a hypothesis for author confirmation, not as the administered sequence.",
+        "Ask the corresponding authors for the deposited pET28a-TT-P0 sequence, which would settle the linkers and tag in one step."
+      ],
       "limitations": "Same study as P0-my32; not an independent replication. Component recovery is diagnostic, not a full-protein efficacy result."
     }
   ]

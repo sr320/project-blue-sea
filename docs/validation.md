@@ -15,10 +15,33 @@ and regions, reference mappings, formulation, comparator-specific endpoints,
 timing, sequence file/checksum and curation status.
 
 The current entries describe TT-P0 and P0-my32 from one primary study.
-They are diagnostic and pending exact sequence/fragment mapping. Both share
-P0 and the study; they are not independent positive protein controls. The
-late endpoint's timing conflicts between the paper's timeline and figure
-caption and is explicitly unresolved rather than assigned an invented dpc.
+They are diagnostic and pending the exact administered sequence. Both share
+the study and the identical P0 fragment, from one template, so they are not
+independent positive protein controls.
+
+Fragment mapping is partly settled. A component carries a `derived_fragment`
+or `derived_insert` block when its sequence was reconstructed here rather
+than read from a paper: what it was derived from, how it matches the
+configured annotation, and what independently confirms it. A component
+reaches `verified` only on an exact annotation match whose boundaries hold
+up against the cloning primers. Deriving a component never advances a
+construct's own `curation_status`, which tracks the administered sequence.
+
+That study prints no construct sequence: only PCR primers, and MS/MS identity
+confirmations rather than sequences. So both records stay `sequence_pending`
+on evidence, not on unfinished reading. Each carries its design references,
+expression details, cloning primers with restriction sites, and a blockers
+and next-steps list naming what would actually close it.
+
+Study-level facts shared by both constructs live under `studies`, keyed by
+DOI: the timeline in study weeks and the unresolved timing conflicts. Two are
+recorded. The reported "2, 5, 11 months" labels match no challenge date under
+either the prime or the boost anchor, and Figure 5's 32 dpc contradicts the
+week 44-to-51 interval. Arithmetic that would explain each is recorded as a
+derived hypothesis, marked as not stated by the paper, and is not used to
+populate any field. Endpoints carry their comparator, p-value and the section
+they came from; one abstract-only figure with no Results counterpart is
+labelled as such rather than promoted to a result.
 
 Before marking a construct verified:
 
