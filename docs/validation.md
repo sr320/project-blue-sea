@@ -82,6 +82,16 @@ top tier retained under every configured source removal. Thresholds live in
 `config.yaml`; set them before inspecting the outcome. Robustness is calculated
 with copied records, so the final scores remain the baseline scores.
 
+Leave-one-source-out only tests a source that varies. A source whose table is
+unconfigured scores every record identically, so removing it reorders nothing
+and hands back the baseline tier intact, which the policy above would read as
+flawless stability -- most convincingly where there is no evidence at all. The
+report therefore counts the distinct scores each configured source produces
+and lists any that are constant under
+`sensitivity_validation.uninformative_sources`. Those fail the verdict instead
+of passing it vacuously, so an absent evidence table surfaces as absence. An
+unrecognised source name drops no criteria and is caught the same way.
+
 Random-control percentiles describe the surviving background sample. A random
 sample's middle rank is not evidence of biological predictive accuracy and
 is not used as an efficacy gate.
